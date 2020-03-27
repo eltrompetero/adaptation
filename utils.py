@@ -1,5 +1,5 @@
 # ====================================================================================== #
-# Module for learning algorithms.
+# Module for learning algorithms comparing passive and active adaptation.
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 import numpy as np

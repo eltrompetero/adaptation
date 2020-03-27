@@ -1,5 +1,5 @@
 # ====================================================================================== #
-# Module for learning algorithms.
+# Module for learning algorithms comparing passive and active adaptation.
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 from .utils import *
@@ -14,45 +14,76 @@ class Vision():
     One instance has a fixed noise trajectory that is decided once.
     """
     def __init__(self,
+                 noise,
                  nBatch = 20,
                  T = 10_000,
-                 dragh = .01,
-                 sigmah = 1,
                  beta = .1,
                  rng=None):
         """
         Parameters
         ----------
+        noise : dict
+            Noise to consider.
+            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck or 'binary'.
+            For OU:
+                dragh : float, .01
+                    Coeff on linear force pulling h back to 0, inverse time.
+                sigmah : float, 1 
+                    Std of normal distribution modifying h, specifying environmental noise per
+                    batch step, or rate fluctuations. This also determines the absolute timescale
+                    where unit steps in time are when sigmah=1.
+            For binary:
+                tau : float
+                    Decorrelation time for exponential distribution.
+                scale : float
+                    Magnitude for binary values of fields.
         nBatch : int, 20
             Number of samples on which the cells learn. Effectively, the time scale for
             cell learning.
         T : int, 10_000
             Number of iterations in terms of cell time (i.e., total number of samples is
             nBatch x T).
-        dragh : float, .01
-            Coeff on linear force pulling h back to 0, inverse time.
-        sigmah : float, 1 
-            Std of normal distribution modifying h, specifying environmental noise per
-            batch step, or rate fluctuations. This also determines the absolute timescale
-            where unit steps in time are when sigmah=1.
+        beta : float, 0.1
+            Weight on history for learning. This is related to the decorrelation time.
+        rng : np.random.RandomState, None
         """
         
-        assert nBatch>=1 and T>0 and 1>=dragh>=0 and sigmah>0
+        assert nBatch>=1 and T>0
         self.nBatch = nBatch
-        self.dragh = dragh
-        self.sigmah = sigmah
         self.T = T
         self.rng = rng or np.random.RandomState()
         self.update_beta(beta)
         h = np.zeros(T)  # underlying signal
+        
+        # generate time trajectory of fields
+        if noise['type']=='OU' or noise['type']=='ou':
+            dragh = noise.get('dragh', .01)
+            sigmah = noise.get('sigmah', 1)
+            assert 1>=dragh>=0 and sigmah>0
 
-        for t in range(1, T):
-            # one could explicitly put the dependence on time for the std, but because the time
-            # step is fixed, it only modulates sigmah by a constant
-            #h[t] = h[t-1] * (1-dragh) + self.rng.normal(scale=sigmah * np.sqrt(2*dragh))
+            for t in range(1, T):
+                # one could explicitly put the dependence on time for the std, but because the time
+                # step is fixed, it only modulates sigmah by a constant
+                #h[t] = h[t-1] * (1-dragh) + self.rng.normal(scale=sigmah * np.sqrt(2*dragh))
 
-            # discrete version of OH dynamics
-            h[t] = h[t-1] * (1-dragh) + self.rng.normal(scale=sigmah)
+                # discrete version of OH dynamics
+                h[t] = h[t-1] * (1-dragh) + self.rng.normal(scale=sigmah)
+
+            self.dragh = dragh
+            self.sigmah = sigmah
+
+        elif noise['type']=='binary':
+            tau = noise['tau']  # decorrelation time
+            hscale = noise['scale']  # magnitude of biasing fields
+            t = 0
+            while t<T:
+                dt = int(self.rng.exponential(tau)) + 1
+                hscale *= -1
+                h[t:t+dt] = hscale
+                t += dt
+            self.hscale = hscale
+        else:
+            raise Exception("Unrecognized noise type.")
         
         self.h = h
         
@@ -62,7 +93,7 @@ class Vision():
         self.alpha = 1 - beta
 
     def learn(self, beta_range, **kwargs):
-        """Learn distribution of environment as it evolves over a range of beta values.
+        """Learn distribution of environment as it evolves for a range of beta values.
 
         Parameters
         ----------
@@ -90,7 +121,6 @@ class Vision():
             #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
             out = jit_learn_vision(self.rng.randint(2**32-1),
                                    self.T,
-                                   self.dragh,
                                    self.h,
                                    self.nBatch,
                                    self.beta,
@@ -146,7 +176,7 @@ class Vision():
 #end Vision
 
 @njit
-def jit_learn_vision(seed, T, dragh, h, nBatch, beta, alpha):
+def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
     """Jit version of Vision._learn().
     """
 
