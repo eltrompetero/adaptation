@@ -645,16 +645,17 @@ class TreeEigensolverBinary():
         newphat += d
 
         if run_checks:
-            assert np.isclose(np.trapz(newphat, x), 1), np.trapz(newphat, x)
+            assert np.isclose(np.trapz(newphat, self.x), 1), np.trapz(newphat, self.x)
         return newphat
-    
+ 
     def solve(self,
               recursion_depth,
               no_of_one_degree_steps=3,
               tol=1e-3,
               tmax=20,
               phat0=None,
-              iprint=True):
+              iprint=True,
+              symmetrize=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
         or before max steps is reached.
         
@@ -668,6 +669,7 @@ class TreeEigensolverBinary():
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
+        symmetrize : bool, True
         
         Returns
         -------
@@ -708,11 +710,12 @@ class TreeEigensolverBinary():
         phat = newphat
 
         # symmetrize
-        phat += phat[::-1]
-        phat /= 2
+        if symmetrize:
+            phat += phat[::-1]
+            phat /= 2
         
         # set error flag
-        if counter>=tmax:
+        if counter>=tmax and err>tol:
             errflag = 1
         else:
             errflag = 0
@@ -725,8 +728,159 @@ class TreeEigensolverBinary():
             print("Done in %d steps."%counter)
             print("Error of %E."%err)
         return phat, errflag
+
+    def apply_transform_cond_external(self,
+                                      phat,
+                                      sign,
+                                      recurse=False,
+                                      phat_pos=None,
+                                      phat_neg=None,
+                                      run_checks=False):
+        """One iteration of probability density transformation while keeping track of
+        density separately conditional on external field. 
+
+        This is the eigenvalue problem except that we are keeping track of the
+        conditional probability distributions separately. The recursion number tells us
+        the order of the expansion.
+
+        Since h0 and -h0 are symmetric, we actually can compare the two distributions to
+        see how well we've converged (errors are +/- of each other), i.e., we can take
+        average.
+        
+        Parameters
+        ----------
+        phat_pos : ndarray
+        phat_neg : ndarray
+        sign : int, +/-1
+            Sign indicates if we're starting from  (+) or - (-). This is necessary to
+            determine which newphat we add the contribution to since exploit the symmetry
+            of this function to call this exact same function for the negative operation.
+        recurse : int, False
+        run_checks : bool, False
+
+        Returns
+        -------
+        ndarray
+        ndarray
+        """
+
+        assert recurse>=0
+        assert sign==1 or sign==-1
+
+        if phat_pos is None:
+            phat_pos = np.zeros_like(self.x)
+            phat_neg = np.zeros_like(self.x)
+
+        # starting with  and staying at 
+        d = (1 - 1/self.tau) * self.stay(phat)
+        if recurse:
+            self.apply_transform_cond_external(d, sign, recurse-1,
+                                               phat_pos=phat_pos,
+                                               phat_neg=phat_neg)
+        else:  # if we've reached leaves of the recursion tree
+            if sign==1:
+                phat_pos += d
+            else:
+                phat_neg += d
+
+        # starting with  and switching to -
+        d = 1/self.tau * self.leave(phat)
+        if recurse:
+            self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
+                                               phat_pos=phat_pos,
+                                               phat_neg=phat_neg)
+        else:  # if we've reached leaves of the recursion tree
+            if sign==-1:
+                phat_pos += d[::-1]
+            else:
+                phat_neg += d[::-1]
+
+        return phat_pos, phat_neg
+
+    def solve_external_cond(self,
+                            recursion_depth,
+                            no_of_one_degree_steps=3,
+                            tol=1e-3,
+                            tmax=20,
+                            phat0=None,
+                            iprint=True,
+                            symmetrize=False):
+        """For a given recursion depth, find the solution that satisfies the given tolerance
+        or before max steps is reached.
+        
+        Parameters
+        ----------
+        recursion_depth : int
+        no_of_one_degree_steps : int, 3
+            Number of first order approximations to run to get an approximate starting form.
+        tol : float, 1e-3
+        tmax : int, 20
+        phat0 : ndarray, None
+            Starting solution. Otherwise, it is approximated using the tree to depth 1.
+        iprint : bool, True
+        symmetrize : bool, False
+        
+        Returns
+        -------
+        ndarray
+            Solution.
+        ndarray
+            Symmetric solution. Good for checking convergence with recursion depth.
+        int
+            Error flag.
+        """
+        
+        newphatpos = np.ones_like(self.x)
+        newphatpos /= np.trapz(newphatpos, self.x)
+
+        # setup while loop
+        counter = 0
+        phatpos = np.zeros_like(newphatpos)
+        err = np.linalg.norm(newphatpos-phatpos)
+
+        # first get approximate first order solution
+        if phat0 is None:
+            for i in range(no_of_one_degree_steps):
+                phatpos = newphatpos
+                newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, False)
+                err = np.sqrt(np.trapz((newphatpos-phatpos)**2, self.x))
+        # or use given starting approximation
+        else:
+            assert phat0.size==newphatpos.size
+            newphatpos = phat0
+
+        while counter<=tmax and err>tol:
+            phatpos = newphatpos
+            newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, recursion_depth)
+            newphatpos /= np.trapz(newphatpos, self.x)
+
+            err = np.sqrt(np.trapz( (phatpos-newphatpos)**2, self.x))
+            counter += 1
+        phatneg = newphatneg / np.trapz(newphatneg, self.x)
+        phatpos = newphatpos
+
+        # symmetrize
+        if symmetrize:
+            phatpos += phatpos[::-1]
+            phatpos /= 2
+            phatneg += phatneg[::-1]
+            phatneg /= 2
+
+        # set error flag
+        if counter>=tmax and err>tol:
+            errflag = 1
+        else:
+            errflag = 0
+        if np.sqrt(np.trapz( (phatpos-phatneg)**2, self.x ))>tol:
+            errflag = 2
+        
+        if iprint:
+            print("Done in %d steps."%counter)
+            print("Error of %E."%err)
+        return  phatpos, phatneg, errflag
     
-    def increase_depth(self, phat, o_recurse, delta_recurse):
+    def increase_depth(self, phat, o_recurse, delta_recurse,
+                       external_cond=False):
         """Given solution to certain recursion depth, increase recursion depth.
         
         Parameters
@@ -734,14 +888,26 @@ class TreeEigensolverBinary():
         phat : ndarray
         o_recurse : ndarray
         delta_recurse: ndarray
+        external_cond : bool, False
         
         Returns
         -------
         ndarray
+        ndarray (optional)
+        int
+            Error flag.
+        float
+            Norm change in density.
         """
         
-        newphat, errflag = self.solve(o_recurse + delta_recurse,
-                                      phat0=phat)
-        err = np.sqrt(np.trapz((phat-newphat)**2, self.x))
-        return newphat, errflag, err
+        if not external_cond:
+            newphat, errflag = self.solve(o_recurse + delta_recurse,
+                                          phat0=phat)
+            err = np.sqrt(np.trapz((phat-newphat)**2, self.x))
+            return newphat, errflag, err
+
+        newphatpos, newphatneg, errflag = self.solve_external_cond(o_recurse + delta_recurse,
+                                                                   phat0=phat)
+        err = np.sqrt(np.trapz((phat-newphatpos)**2, self.x))
+        return newphatpos, newphatneg, errflag, err
 #end TreeEigensolverBinary
