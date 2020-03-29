@@ -7,6 +7,7 @@ from copy import deepcopy
 from numba.typed import Dict
 from numba import types
 from warnings import warn
+import multiprocess as mp
 
 
 
@@ -585,6 +586,9 @@ class TreeEigensolverBinary():
         x = np.arange(L//dx+1) * dx
         x = np.concatenate((-x[1:][::-1], x))
         self.x = x
+        self.cache_phatpos = {}  # cache for different beta
+        self.cache_phatneg = {}
+        self.cache_phat = {}
         
         s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
         self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
@@ -727,6 +731,8 @@ class TreeEigensolverBinary():
         if iprint:
             print("Done in %d steps."%counter)
             print("Error of %E."%err)
+
+        self.cache_phat[self.beta] = phat.copy()
         return phat, errflag
 
     def apply_transform_cond_external(self,
@@ -877,6 +883,9 @@ class TreeEigensolverBinary():
         if iprint:
             print("Done in %d steps."%counter)
             print("Error of %E."%err)
+
+        self.cache_phatpos[self.beta] = phatpos.copy()
+        self.cache_phatneg[self.beta] = phatneg.copy()
         return  phatpos, phatneg, errflag
     
     def increase_depth(self, phat, o_recurse, delta_recurse,
@@ -910,4 +919,49 @@ class TreeEigensolverBinary():
                                                                    phat0=phat)
         err = np.sqrt(np.trapz((phat-newphatpos)**2, self.x))
         return newphatpos, newphatneg, errflag, err
+
+    def dkl(self, beta_range, recurse, **kwargs):
+        """Calculate Kullback-Leibler divergence across a range of beta.
+
+        Parameters
+        ----------
+        beta_range : ndarray
+        recurse : int
+        **kwargs
+
+        Returns
+        -------
+        ndarray
+            Array of averaged Kullback-Leibler divergence.
+        """
+        
+        solvedDkl = np.zeros_like(beta_range)
+        dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
+               pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
+
+        def loop_wrapper(args, recurse=recurse):
+            i, beta = args
+            
+            if beta in self.cache_phatneg.keys():
+                return ((self.cache_phatneg[beta] + self.cache_phatpos[beta])/2,
+                        None,
+                        None)
+
+            solver = TreeEigensolverBinary(self.tau, self.h0, beta, self.nBatch)
+            phatpos, phatneg, errflag = solver.solve_external_cond(recurse, **kwargs)
+            phat = (phatpos+phatneg)/2
+            return phat, phatpos, phatneg
+
+        with mp.Pool(mp.cpu_count()-1) as pool:
+            phat, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
+        
+        for i, beta in enumerate(beta_range):
+            if not beta in self.cache_phatneg.keys():
+                self.cache_phatpos[beta] = phatpos[i]
+                self.cache_phatneg[beta] = phatneg[i]
+            
+            # properly weighted average of DKL
+            solvedDkl[i] = np.trapz( dkl * phat[i], self.x)
+
+        return solvedDkl
 #end TreeEigensolverBinary
