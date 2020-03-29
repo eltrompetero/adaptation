@@ -4,6 +4,8 @@
 # ====================================================================================== #
 from .utils import *
 from copy import deepcopy
+from numba.typed import Dict
+from numba import types
 
 
 
@@ -75,12 +77,19 @@ class Vision():
         elif noise['type']=='binary':
             tau = noise['tau']  # decorrelation time
             hscale = noise['scale']  # magnitude of biasing fields
-            t = 0
-            while t<T:
-                dt = int(self.rng.exponential(tau)) + 1
-                hscale *= -1
-                h[t:t+dt] = hscale
-                t += dt
+
+            h[0] = hscale
+            for t in range(1, T):
+                if self.rng.rand()<(1/tau):
+                    h[t] = -h[t-1]
+                else:
+                    h[t] = h[t-1]
+            #t = 0
+            #while t<T:
+            #    dt = int(self.rng.exponential(tau)) + 1
+            #    hscale *= -1
+            #    h[t:t+dt] = hscale
+            #    t += dt
             self.hscale = hscale
         else:
             raise Exception("Unrecognized noise type.")
@@ -237,27 +246,31 @@ class Stigmergy(Vision):
     initialization.
     """
     def __init__(self,
+                 noise,
                  nBatch = 20,
                  T = 10_000,
-                 dragh = .001,
-                 sigmah = .1,
                  beta = .1,
                  action_params=(1,1),
                  rng=None):
         """
         Parameters
         ----------
+        noise : dict
+            'ou'
+                dragh : float, .001
+                    Coeff on linear force pulling h back to 0, inverse time.
+                sigmah : float, .1 
+                    Std of normal distribution modifying h, specifying environmental noise per
+                    batch step, or the timescale of fluctuations.
+            'binary'
+                tau : float
+                scale : float
         nBatch : int, 20
             Number of samples on which the cells learn. Effectively, the time scale for
             cell learning.
         T : int, 10_000
             Number of iterations in terms of cell time (i.e., total number of samples is
             nBatch x T).
-        dragh : float, .001
-            Coeff on linear force pulling h back to 0, inverse time.
-        sigmah : float, .1 
-            Std of normal distribution modifying h, specifying environmental noise per
-            batch step, or the timescale of fluctuations.
         beta : float, .1
             Learning weight for aggregator, effectively setting the time scale for the
             feedback loop.
@@ -266,20 +279,30 @@ class Stigmergy(Vision):
             rate = u * ( (h-hhat)^2 + v )
         """
         
-        assert nBatch>=1 and T>0 and dragh>=0 and sigmah>0
-        assert action_params[0]>=0 and action_params[1]>=0
+        assert nBatch>=1 and T>0
+        assert action_params[1]>=0
         self.nBatch = nBatch
         self.beta = beta
         self.alpha = 1 - beta
-        self.dragh = dragh
-        self.sigmah = sigmah
         self.u = action_params[0]
         self.v = action_params[1]
         self.T = T
         self.rng = rng or np.random.RandomState()
+        self.noise = noise
 
-        self.dh = np.zeros(T)  # random noise
-        self.dh[1:] = self.rng.normal(scale=sigmah, size=T-1)
+        if noise['type']=='ou':
+            sigmah = noise['sigmah']
+            dragh = noise['dragh']
+            assert dragh>=0 and sigmah>0
+            self.sigmah = sigmah
+            self.dragh = dragh
+
+            self.dh = np.zeros(T)  # random noise
+            self.dh[1:] = self.rng.normal(scale=sigmah, size=T-1)
+        elif noise['type']=='binary':
+            pass
+        else:
+            raise Exception("Bad noise type.")
         
     def update_beta(self, beta):
         self.beta = beta
@@ -307,10 +330,27 @@ class Stigmergy(Vision):
             self.update_beta(beta)
             # reset rng every loop so that random trajectory remains the same
             self.rng = deepcopy(rng)
+            
+            # slow version for debugging
             #h[beta], hhat[beta], H[beta], dkl[beta] = self._learn()
-            out = jit_learn_stigmergy(self.rng.randint(2**32-1), self.T, self.u, self.v,
-                                      self.dragh, self.dh,
-                                      self.nBatch, self.beta, self.alpha)
+            # call fast jit version
+            if self.noise['type']=='ou':
+                out = jit_learn_stigmergy(self.rng.randint(2**32-1), self.T, self.u, self.v,
+                                          self.dragh, self.dh,
+                                          self.nBatch, self.beta, self.alpha)
+            else:
+                # set up noise for use with njit
+                noise = self.noise.copy()
+                del noise['type']
+                jitnoise = Dict.empty(key_type=types.unicode_type,
+                                      value_type=types.float64)
+                for k, v in noise.items():
+                    jitnoise[k] = v
+
+                out = jit_learn_stigmergy_binary_noise(self.rng.randint(2**32-1), self.T, self.u, self.v,
+                                                       jitnoise, self.nBatch, self.beta, self.alpha)
+            
+            # read output
             h[beta], hhat[beta], H[beta], dkl[beta] = out
 
         self.h, self.hhat, self.H, self.dkl = h, hhat, H, dkl
@@ -326,39 +366,73 @@ class Stigmergy(Vision):
         hhat = np.zeros(self.T)
         H = np.zeros(self.T)
         dkl = np.zeros(self.T)
-
-        for t in range(self.T):
-            if t>0:
-                # action rate grows with the strength of the signal and with similarity
-                # between the two signals
-                actionRate = self.u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + self.v)
-                h[t] = h[t-1] * np.exp(-(self.dragh + actionRate)) + self.dh[t]
-
-            # simulate coin flip using environmental field
-            p = [pminus(h[t]), pplus(h[t])]
-            X = self.rng.choice([-1,1], size=self.nBatch, p=p)
-
-            # regularize estimate to avoid infinities. makes sure that Dkl never diverges
-            Xmu = X.mean()
-            if Xmu<(-1+2/self.nBatch):
-                Xmu = -1+2/self.nBatch
-            if Xmu>(1-2/self.nBatch):
-                Xmu = 1-2/self.nBatch
-
-            if t==0:
-                hhat[t] = np.arctanh(Xmu)
-                H[t] = hhat[t]
-            else:
-                # weighted combination of memory and current measurement
-                hhat[t] = self.beta * H[t-1] + self.alpha * np.arctanh(Xmu)
-                H[t] = hhat[t]
-
-            dkl[t] = np.nansum([pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t]))),
-                                pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
         
+        if self.noise['type']=='ou':
+            for t in range(self.T):
+                if t>0:
+                    # action rate grows with the strength of the signal and with similarity
+                    # between the two signals
+                    actionRate = self.u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + self.v)
+                    h[t] = h[t-1] * np.exp(-(self.dragh + actionRate)) + self.dh[t]
+
+                # simulate coin flip using environmental field
+                p = [pminus(h[t]), pplus(h[t])]
+                X = self.rng.choice([-1,1], size=self.nBatch, p=p)
+
+                # regularize estimate to avoid infinities. makes sure that Dkl never diverges
+                Xmu = X.mean()
+                if Xmu<(-1+2/self.nBatch):
+                    Xmu = -1+2/self.nBatch
+                if Xmu>(1-2/self.nBatch):
+                    Xmu = 1-2/self.nBatch
+
+                if t==0:
+                    hhat[t] = np.arctanh(Xmu)
+                    H[t] = hhat[t]
+                else:
+                    # weighted combination of memory and current measurement
+                    hhat[t] = self.beta * H[t-1] + self.alpha * np.arctanh(Xmu)
+                    H[t] = hhat[t]
+
+                dkl[t] = np.nansum([pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t]))),
+                                    pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
+
+        else:
+            h[0] = self.noise['scale']
+
+            for t in range(self.T):
+                if t>0:
+                    # action rate grows with the strength of the signal and with similarity
+                    # between the two signals
+                    actionRate = self.u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + self.v)
+                    if self.rng.rand() < (1 / self.noise['tau'] + actionRate):
+                        h[t] = -h[t-1]
+                    else:
+                        h[t] = h[t-1]
+
+                # simulate coin flip using environmental field
+                p = [pminus(h[t]), pplus(h[t])]
+                X = self.rng.choice([-1,1], size=self.nBatch, p=p)
+
+                # regularize estimate to avoid infinities. makes sure that Dkl never diverges
+                Xmu = X.mean()
+                if Xmu<(-1+2/self.nBatch):
+                    Xmu = -1+2/self.nBatch
+                if Xmu>(1-2/self.nBatch):
+                    Xmu = 1-2/self.nBatch
+
+                if t==0:
+                    hhat[t] = np.arctanh(Xmu)
+                    H[t] = hhat[t]
+                else:
+                    # weighted combination of memory and current measurement
+                    hhat[t] = self.beta * H[t-1] + self.alpha * np.arctanh(Xmu)
+                    H[t] = hhat[t]
+
+                dkl[t] = np.nansum([pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t]))),
+                                    pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
         return h, hhat, H, dkl
 #end Stigmergy
-
 
 @njit
 def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
@@ -413,3 +487,57 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
     
     return h, hhat, H, dkl
 
+@njit
+def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
+    if seed!=-1:
+        np.random.seed(seed)
+    
+    h = np.zeros(T)
+    hhat = np.zeros(T)
+    H = np.zeros(T)
+    dkl = np.zeros(T)
+
+    h[0] = noise['scale']
+
+    for t in range(T):
+        if t>0:
+            # action rate grows with the strength of the signal and with similarity
+            # between the two signals
+            actionRate = u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + v)
+            if np.random.rand() < (1 / noise['tau'] + actionRate):
+                h[t] = -h[t-1]
+            else:
+                h[t] = h[t-1]
+
+        # simulate coin flip using environmental field
+        p = pplus(h[t])
+        X = np.zeros(nBatch)
+        for i in range(nBatch):
+            if np.random.rand()<p:
+                X[i] = 1
+            else:
+                X[i] = -1
+
+        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
+        Xmu = X.mean()
+        if Xmu<(-1+2/nBatch):
+            Xmu = -1+2/nBatch
+        if Xmu>(1-2/nBatch):
+            Xmu = 1-2/nBatch
+
+        if t==0:
+            hhat[t] = np.arctanh(Xmu)
+            H[t] = hhat[t]
+        else:
+            # weighted combination of memory and current measurement
+            hhat[t] = beta * H[t-1] + alpha * np.arctanh(Xmu)
+            H[t] = hhat[t]
+
+        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
+        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        if not np.isnan(term1):
+            dkl[t] += term1
+        if not np.isnan(term2):
+            dkl[t] += term2
+ 
+    return h, hhat, H, dkl
