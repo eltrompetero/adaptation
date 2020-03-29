@@ -6,6 +6,7 @@ from .utils import *
 from copy import deepcopy
 from numba.typed import Dict
 from numba import types
+from warnings import warn
 
 
 
@@ -541,3 +542,206 @@ def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
             dkl[t] += term2
  
     return h, hhat, H, dkl
+
+
+
+class TreeEigensolverBinary():
+    """Eigenvalue formulation for binary (h0, -h0) environment state.
+    """
+    def __init__(self, tau, h0, beta, nBatch,
+                 L=1, dx=1e-3):
+        """
+        Parameters
+        ----------
+        tau : float
+            Time scale for flipping external field.
+        h0 : float
+            Magnitude of external field.
+        beta : float
+            Weight on memory.
+        nBatch : int
+            Number of samples from which to learn. This determines Gaussian noise profile.
+        L : float, 1
+            Max positive value of lattice. Domain spans [-L, L].
+        dx : float, 1e-3
+            Spacing of points on lattice spreading out from x=0.
+        """
+        
+        # check input args
+        assert tau>0
+        assert 0 <= h0 < L
+        assert 0<=beta<=1
+        if nBatch<1000:
+            warn("If nBatch is too small, Gaussian assumption is broken.")
+        assert dx>=1e-4, "dx is too small for fast computation"
+        
+        # set up
+        self.tau = tau
+        self.h0 = h0
+        self.beta = beta
+        self.nBatch = nBatch
+        self.L = L
+        self.dx = dx
+        x = np.arange(L//dx+1) * dx
+        x = np.concatenate((-x[1:][::-1], x))
+        self.x = x
+        
+        s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
+        self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
+                                                       np.sqrt(2 * np.pi) / sigma)
+        self.trapz_row = lambda mat : np.trapz(mat, x, axis=1)
+        
+        dhhat = (x[:,None] - x[None,:]*beta) / (1-beta)  # what would delta hhat be given the change to hhat
+        eps = (np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field
+        self.staycoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
+        eps = (-np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field
+        self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
+        
+        # basic precision checks (for one's sanity)
+        assert np.isclose(np.trapz(self.eps_gaussian(x), x), 1)
+        assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
+        
+    def stay(self, phat):
+        """Transformation of density for external fields that stay the same."""
+        return self.trapz_row(phat[None,:] * self.staycoeff) / (1-self.beta)
+
+    def leave(self, phat):
+        """Transformation of density for external fields that leave for the other side."""
+        return self.trapz_row(phat[None,:] * self.leavecoeff) / (1-self.beta)
+
+    def apply_transform(self,
+                        phat,
+                        recurse=False,
+                        run_checks=False):
+        """One iteration of probability density transformation.
+        
+        Parameters
+        ----------
+        phat : ndarray
+        recurse : int, False
+        run_checks : bool, False
+
+        Returns
+        -------
+        ndarray
+        """
+        assert recurse>=0
+
+        # action of first term, h0 -> h0
+        # don't forget that when we calculate Gaussian distribution, we must account for scaling
+        # transformation of hhat in order to calculate a normalized distribution
+        newphat = np.zeros_like(self.x)
+
+        # starting with h0 and staying at h0
+        d = (1 - 1/self.tau) * self.stay(phat)
+        if recurse:
+            d = self.apply_transform(d, recurse-1)
+        newphat += d
+
+        # starting with h0 and switching to -h0
+        d = 1/self.tau * self.leave(phat)
+        if recurse:
+            d = self.apply_transform(d[::-1], recurse-1)[::-1]
+        newphat += d
+
+        if run_checks:
+            assert np.isclose(np.trapz(newphat, x), 1), np.trapz(newphat, x)
+        return newphat
+    
+    def solve(self,
+              recursion_depth,
+              no_of_one_degree_steps=3,
+              tol=1e-3,
+              tmax=20,
+              phat0=None,
+              iprint=True):
+        """For a given recursion depth, find the solution that satisfies the given tolerance
+        or before max steps is reached.
+        
+        Parameters
+        ----------
+        recursion_depth : int
+        no_of_one_degree_steps : int, 3
+            Number of first order approximations to run to get an approximate starting form.
+        tol : float, 1e-3
+        tmax : int, 20
+        phat0 : ndarray, None
+            Starting solution. Otherwise, it is approximated using the tree to depth 1.
+        iprint : bool, True
+        
+        Returns
+        -------
+        ndarray
+            Solution.
+        int
+            Error flag.
+        """
+
+        newphat = np.ones_like(self.x)
+        newphat /= np.trapz(newphat, self.x)
+        # sanity check for normalization
+        assert np.isclose(np.trapz(newphat, self.x), 1), np.trapz(newphat, self.x)
+
+        # setup while loop
+        counter = 0
+        phat = np.zeros_like(newphat)
+        err = np.linalg.norm(newphat-phat)
+
+        # first get approximate first order solution
+        if phat0 is None:
+            for i in range(no_of_one_degree_steps):
+                phat = newphat
+                newphat = self.apply_transform(phat)    
+                err = np.sqrt(np.trapz((newphat-phat)**2, self.x))
+        # or use given starting approximation
+        else:
+            assert phat0.size==newphat.size
+            newphat = phat0
+
+        while counter<=tmax and err>tol:
+            phat = newphat
+            newphat = self.apply_transform(phat, recursion_depth)
+
+            err = np.sqrt(np.trapz((newphat-phat)**2, self.x))
+            counter += 1
+
+        phat = newphat
+
+        # symmetrize
+        phat += phat[::-1]
+        phat /= 2
+        
+        # set error flag
+        if counter>=tmax:
+            errflag = 1
+        else:
+            errflag = 0
+        # poor normalization supersedes other error flags
+        if not np.isclose(np.trapz(phat, self.x), 1):
+            errflag = 2
+            warn("Solution is unstable and not normalized.")
+        
+        if iprint:
+            print("Done in %d steps."%counter)
+            print("Error of %E."%err)
+        return phat, errflag
+    
+    def increase_depth(self, phat, o_recurse, delta_recurse):
+        """Given solution to certain recursion depth, increase recursion depth.
+        
+        Parameters
+        ----------
+        phat : ndarray
+        o_recurse : ndarray
+        delta_recurse: ndarray
+        
+        Returns
+        -------
+        ndarray
+        """
+        
+        newphat, errflag = self.solve(o_recurse + delta_recurse,
+                                      phat0=phat)
+        err = np.sqrt(np.trapz((phat-newphat)**2, self.x))
+        return newphat, errflag, err
+#end TreeEigensolverBinary
