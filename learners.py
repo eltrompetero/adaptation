@@ -8,6 +8,7 @@ from numba.typed import Dict
 from numba import types
 from warnings import warn
 import multiprocess as mp
+from threadpoolctl import threadpool_limits
 
 
 
@@ -593,7 +594,10 @@ class TreeEigensolverBinary():
         s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
         self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
                                                        np.sqrt(2 * np.pi) / sigma)
-        self.trapz_row = lambda mat : np.trapz(mat, x, axis=1)
+        self.M = np.ones(x.size) * dx  # integration operator
+        self.M[0] /= 2
+        self.M[-1] /= 2
+        self.trapz_row = lambda mat, M=self.M : mat.dot(M)
         
         dhhat = (x[:,None] - x[None,:]*beta) / (1-beta)  # what would delta hhat be given the change to hhat
         eps = (np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field
@@ -602,7 +606,7 @@ class TreeEigensolverBinary():
         self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
         
         # basic precision checks (for one's sanity)
-        assert np.isclose(np.trapz(self.eps_gaussian(x), x), 1)
+        assert np.isclose(self.eps_gaussian(x).dot(self.M), 1)
         assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
         
     def stay(self, phat):
@@ -616,6 +620,7 @@ class TreeEigensolverBinary():
     def apply_transform(self,
                         phat,
                         recurse=False,
+                        recurse_skip=0,
                         run_checks=False):
         """One iteration of probability density transformation.
         
@@ -623,13 +628,16 @@ class TreeEigensolverBinary():
         ----------
         phat : ndarray
         recurse : int, False
+        recurse_skip : int, 0
         run_checks : bool, False
 
         Returns
         -------
         ndarray
         """
+
         assert recurse>=0
+        assert recurse%(recurse_skip+1)==0
 
         # action of first term, h0 -> h0
         # don't forget that when we calculate Gaussian distribution, we must account for scaling
@@ -637,19 +645,31 @@ class TreeEigensolverBinary():
         newphat = np.zeros_like(self.x)
 
         # starting with h0 and staying at h0
-        d = (1 - 1/self.tau) * self.stay(phat)
+        if recurse_skip:
+            d = self.stay(phat)
+            for i in range(recurse_skip-1):
+                d = self.stay(d)
+            d *= 1 - recurse_skip/self.tau
+        else:
+            d = (1 - 1/self.tau) * self.stay(phat)
         if recurse:
-            d = self.apply_transform(d, recurse-1)
+            d = self.apply_transform(d, recurse-1-recurse_skip)
         newphat += d
 
         # starting with h0 and switching to -h0
-        d = 1/self.tau * self.leave(phat)
+        if recurse_skip:
+            d = self.leave(phat)
+            for i in range(recurse_skip-1):
+                d = self.leave(d)
+            d *= recurse_skip/self.tau
+        else:
+            d = 1/self.tau * self.leave(phat)
         if recurse:
-            d = self.apply_transform(d[::-1], recurse-1)[::-1]
+            d = self.apply_transform(d[::-1], recurse-1-recurse_skip)[::-1]
         newphat += d
 
         if run_checks:
-            assert np.isclose(np.trapz(newphat, self.x), 1), np.trapz(newphat, self.x)
+            assert np.isclose(newphat.dot(self.M), 1), newphat.dot(self.M)
         return newphat
  
     def solve(self,
@@ -659,7 +679,8 @@ class TreeEigensolverBinary():
               tmax=20,
               phat0=None,
               iprint=True,
-              symmetrize=True):
+              symmetrize=True,
+              transform_kw={}):
         """For a given recursion depth, find the solution that satisfies the given tolerance
         or before max steps is reached.
         
@@ -674,6 +695,7 @@ class TreeEigensolverBinary():
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
         symmetrize : bool, True
+        transform_kw : dict, {}
         
         Returns
         -------
@@ -684,9 +706,9 @@ class TreeEigensolverBinary():
         """
 
         newphat = np.ones_like(self.x)
-        newphat /= np.trapz(newphat, self.x)
+        newphat /= newphat.dot(self.M)
         # sanity check for normalization
-        assert np.isclose(np.trapz(newphat, self.x), 1), np.trapz(newphat, self.x)
+        assert np.isclose(newphat.dot(self.M), 1), newphat.dot(self.M)
 
         # setup while loop
         counter = 0
@@ -697,8 +719,8 @@ class TreeEigensolverBinary():
         if phat0 is None:
             for i in range(no_of_one_degree_steps):
                 phat = newphat
-                newphat = self.apply_transform(phat)    
-                err = np.sqrt(np.trapz((newphat-phat)**2, self.x))
+                newphat = self.apply_transform(phat)
+                err = np.sqrt(((newphat-phat)**2).dot(self.M))
         # or use given starting approximation
         else:
             assert phat0.size==newphat.size
@@ -706,9 +728,9 @@ class TreeEigensolverBinary():
 
         while counter<=tmax and err>tol:
             phat = newphat
-            newphat = self.apply_transform(phat, recursion_depth)
+            newphat = self.apply_transform(phat, recursion_depth, **transform_kw)
 
-            err = np.sqrt(np.trapz((newphat-phat)**2, self.x))
+            err = np.sqrt(((newphat-phat)**2).dot(self.M))
             counter += 1
 
         phat = newphat
@@ -724,7 +746,7 @@ class TreeEigensolverBinary():
         else:
             errflag = 0
         # poor normalization supersedes other error flags
-        if not np.isclose(np.trapz(phat, self.x), 1):
+        if not np.isclose(phat.dot(self.M), 1):
             errflag = 2
             warn("Solution is unstable and not normalized.")
         
@@ -837,7 +859,7 @@ class TreeEigensolverBinary():
         """
         
         newphatpos = np.ones_like(self.x)
-        newphatpos /= np.trapz(newphatpos, self.x)
+        newphatpos /= newphatpos.dot(self.M)
 
         # setup while loop
         counter = 0
@@ -849,7 +871,7 @@ class TreeEigensolverBinary():
             for i in range(no_of_one_degree_steps):
                 phatpos = newphatpos
                 newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, False)
-                err = np.sqrt(np.trapz((newphatpos-phatpos)**2, self.x))
+                err = np.sqrt(((newphatpos-phatpos)**2).dot(self.M))
         # or use given starting approximation
         else:
             assert phat0.size==newphatpos.size
@@ -858,11 +880,11 @@ class TreeEigensolverBinary():
         while counter<=tmax and err>tol:
             phatpos = newphatpos
             newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, recursion_depth)
-            newphatpos /= np.trapz(newphatpos, self.x)
+            newphatpos /= newphatpos.dot(self.M)
 
-            err = np.sqrt(np.trapz( (phatpos-newphatpos)**2, self.x))
+            err = np.sqrt( ((phatpos-newphatpos)**2).dot(self.M) )
             counter += 1
-        phatneg = newphatneg / np.trapz(newphatneg, self.x)
+        phatneg = newphatneg / newphatneg.dot(self.M)
         phatpos = newphatpos
 
         # symmetrize
@@ -877,7 +899,7 @@ class TreeEigensolverBinary():
             errflag = 1
         else:
             errflag = 0
-        if np.sqrt(np.trapz( (phatpos-phatneg)**2, self.x ))>tol:
+        if np.sqrt( ((phatpos-phatneg)**2).dot(self.M) )>tol:
             errflag = 2
         
         if iprint:
@@ -912,21 +934,24 @@ class TreeEigensolverBinary():
         if not external_cond:
             newphat, errflag = self.solve(o_recurse + delta_recurse,
                                           phat0=phat)
-            err = np.sqrt(np.trapz((phat-newphat)**2, self.x))
+            err = np.sqrt( ((phat-newphat)**2).dot(self.M) )
             return newphat, errflag, err
 
         newphatpos, newphatneg, errflag = self.solve_external_cond(o_recurse + delta_recurse,
                                                                    phat0=phat)
-        err = np.sqrt(np.trapz((phat-newphatpos)**2, self.x))
+        err = np.sqrt( ((phat-newphatpos)**2).dot(self.M) )
         return newphatpos, newphatneg, errflag, err
 
-    def dkl(self, beta_range, recurse, **kwargs):
+    def dkl(self, beta_range, recurse,
+            n_cpus=None,
+            **kwargs):
         """Calculate Kullback-Leibler divergence across a range of beta.
 
         Parameters
         ----------
         beta_range : ndarray
         recurse : int
+        n_cpus : int, None
         **kwargs
 
         Returns
@@ -935,6 +960,7 @@ class TreeEigensolverBinary():
             Array of averaged Kullback-Leibler divergence.
         """
         
+        n_cpus = n_cpus or (mp.cpu_count()-1)
         solvedDkl = np.zeros_like(beta_range)
         dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
                pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
@@ -951,9 +977,10 @@ class TreeEigensolverBinary():
             phatpos, phatneg, errflag = solver.solve_external_cond(recurse, **kwargs)
             phat = (phatpos+phatneg)/2
             return phat, phatpos, phatneg
-
-        with mp.Pool(mp.cpu_count()-1) as pool:
-            phat, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
+        
+        with threadpool_limits(limits=1, user_api='blas'):
+            with mp.Pool(n_cpus) as pool:
+                phat, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
         
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatneg.keys():
@@ -961,7 +988,7 @@ class TreeEigensolverBinary():
                 self.cache_phatneg[beta] = phatneg[i]
             
             # properly weighted average of DKL
-            solvedDkl[i] = np.trapz( dkl * phat[i], self.x)
+            solvedDkl[i] = ( dkl * phat[i] ).dot(self.M)
 
         return solvedDkl
 #end TreeEigensolverBinary
