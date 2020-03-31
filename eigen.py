@@ -415,7 +415,9 @@ class VisionBinary():
         Parameters
         ----------
         beta_range : ndarray
-        recurse : int
+        recurse : list or int
+            If list, specifies recursion depth to use for each beta specified. As a good
+            rule of thumb, this should be several times the time scale implied by beta.
         n_cpus : int, None
         **kwargs
 
@@ -425,26 +427,29 @@ class VisionBinary():
             Array of averaged Kullback-Leibler divergence.
         """
         
+        if not hasattr(recurse, '__len__'):
+            recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
         solvedDkl = np.zeros_like(beta_range)
         dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
                pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
 
-        def loop_wrapper(args, recurse=recurse):
-            i, beta = args
+        def loop_wrapper(args):
+            i, beta, recurse = args
             
             if beta in self.cache_phatneg.keys():
                 return ((self.cache_phatneg[beta] + self.cache_phatpos[beta])/2,
                         None,
                         None)
 
-            solver = TreeEigensolverBinary(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
+            solver = VisionBinary(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
             phatavg, errflag, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
             return phatavg, phatpos, phatneg
         
         with threadpool_limits(limits=1, user_api='blas'):
             with mp.Pool(n_cpus) as pool:
-                phatavg, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
+                args = zip(range(beta_range.size), beta_range, recurse)
+                phatavg, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, args)))
         
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatneg.keys():

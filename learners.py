@@ -409,7 +409,8 @@ class Stigmergy(Vision):
                 if t>0:
                     # action rate grows with the strength of the signal and with similarity
                     # between the two signals
-                    actionRate = self.u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + self.v)
+                    #actionRate = self.u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + self.v)
+                    actionRate = self.u / ((h[t-1]-hhat[t-1])**2 + self.v)
                     if self.rng.rand() < (1 / self.noise['tau'] + actionRate):
                         h[t] = -h[t-1]
                     else:
@@ -438,6 +439,7 @@ class Stigmergy(Vision):
                                     pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
         return h, hhat, H, dkl
 #end Stigmergy
+
 
 @njit
 def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
@@ -508,7 +510,8 @@ def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
         if t>0:
             # action rate grows with the strength of the signal and with similarity
             # between the two signals
-            actionRate = u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + v)
+            #actionRate = u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + v)
+            actionRate = u / ((h[t-1]-hhat[t-1])**2 + v)
             if np.random.rand() < (1 / noise['tau'] + actionRate):
                 h[t] = -h[t-1]
             else:
