@@ -794,7 +794,8 @@ class TreeEigensolverBinary():
 
         assert recurse>=0
         assert sign==1 or sign==-1
-
+        
+        newphat = np.zeros_like(self.x)
         if phat_pos is None:
             phat_pos = np.zeros_like(self.x)
             phat_neg = np.zeros_like(self.x)
@@ -802,28 +803,30 @@ class TreeEigensolverBinary():
         # starting with  and staying at 
         d = (1 - 1/self.tau) * self.stay(phat)
         if recurse:
-            self.apply_transform_cond_external(d, sign, recurse-1,
-                                               phat_pos=phat_pos,
-                                               phat_neg=phat_neg)
+            d = self.apply_transform_cond_external(d, sign, recurse-1,
+                                                   phat_pos=phat_pos,
+                                                   phat_neg=phat_neg)[0]
         else:  # if we've reached leaves of the recursion tree
             if sign==1:
                 phat_pos += d
             else:
                 phat_neg += d
+        newphat += d
 
         # starting with  and switching to -
         d = 1/self.tau * self.leave(phat)
         if recurse:
-            self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
-                                               phat_pos=phat_pos,
-                                               phat_neg=phat_neg)
+            d = self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
+                                                   phat_pos=phat_pos,
+                                                   phat_neg=phat_neg)[0]
         else:  # if we've reached leaves of the recursion tree
             if sign==-1:
                 phat_pos += d[::-1]
             else:
                 phat_neg += d[::-1]
-
-        return phat_pos, phat_neg
+        newphat += d
+        
+        return phat, phat_pos, phat_neg
 
     def solve_external_cond(self,
                             recursion_depth,
@@ -831,8 +834,7 @@ class TreeEigensolverBinary():
                             tol=1e-3,
                             tmax=20,
                             phat0=None,
-                            iprint=True,
-                            symmetrize=False):
+                            iprint=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
         or before max steps is reached.
         
@@ -846,7 +848,6 @@ class TreeEigensolverBinary():
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
-        symmetrize : bool, False
         
         Returns
         -------
@@ -858,48 +859,41 @@ class TreeEigensolverBinary():
             Error flag.
         """
         
-        newphatpos = np.ones_like(self.x)
-        newphatpos /= newphatpos.dot(self.M)
+        newphat = np.ones_like(self.x)
+        newphat /= newphat.dot(self.M)
+        phatavg = np.zeros_like(self.x)
+        newphatavg = np.zeros_like(self.x)
 
         # setup while loop
         counter = 0
-        phatpos = np.zeros_like(newphatpos)
-        err = np.linalg.norm(newphatpos-phatpos)
+        err = tol * 10
 
         # first get approximate first order solution
         if phat0 is None:
             for i in range(no_of_one_degree_steps):
-                phatpos = newphatpos
-                newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, False)
-                err = np.sqrt(((newphatpos-phatpos)**2).dot(self.M))
+                newphat, phatpos, phatneg = self.apply_transform_cond_external(newphat, 1, False)
+            newphatavg = phatpos + phatneg
+            newphatavg /= newphatavg.dot(self.M)
         # or use given starting approximation
         else:
-            assert phat0.size==newphatpos.size
-            newphatpos = phat0
-
+            assert phat0.size==self.x.size
+            newphat = phat0
+        
         while counter<=tmax and err>tol:
-            phatpos = newphatpos
-            newphatpos, newphatneg = self.apply_transform_cond_external(phatpos, 1, recursion_depth)
-            newphatpos /= newphatpos.dot(self.M)
+            phatavg = newphatavg
+            newphat, phatpos, phatneg = self.apply_transform_cond_external(newphat, 1, recursion_depth)
+            newphatavg = phatpos + phatneg
+            newphatavg /= newphatavg.dot(self.M)
 
-            err = np.sqrt( ((phatpos-newphatpos)**2).dot(self.M) )
+            err = np.sqrt( ((phatavg-newphatavg)**2).dot(self.M) )
             counter += 1
-        phatneg = newphatneg / newphatneg.dot(self.M)
-        phatpos = newphatpos
-
-        # symmetrize
-        if symmetrize:
-            phatpos += phatpos[::-1]
-            phatpos /= 2
-            phatneg += phatneg[::-1]
-            phatneg /= 2
 
         # set error flag
         if counter>=tmax and err>tol:
             errflag = 1
         else:
             errflag = 0
-        if np.sqrt( ((phatpos-phatneg)**2).dot(self.M) )>tol:
+        if err>tol:
             errflag = 2
         
         if iprint:
@@ -908,7 +902,7 @@ class TreeEigensolverBinary():
 
         self.cache_phatpos[self.beta] = phatpos.copy()
         self.cache_phatneg[self.beta] = phatneg.copy()
-        return  phatpos, phatneg, errflag
+        return  phatavg, errflag, (phatpos, phatneg)
     
     def increase_depth(self, phat, o_recurse, delta_recurse,
                        external_cond=False):
@@ -973,14 +967,13 @@ class TreeEigensolverBinary():
                         None,
                         None)
 
-            solver = TreeEigensolverBinary(self.tau, self.h0, beta, self.nBatch)
-            phatpos, phatneg, errflag = solver.solve_external_cond(recurse, **kwargs)
-            phat = (phatpos+phatneg)/2
-            return phat, phatpos, phatneg
+            solver = TreeEigensolverBinary(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
+            phatavg, errflag, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
+            return phatavg, phatpos, phatneg
         
         with threadpool_limits(limits=1, user_api='blas'):
             with mp.Pool(n_cpus) as pool:
-                phat, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
+                phatavg, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, enumerate(beta_range))))
         
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatneg.keys():
@@ -988,7 +981,7 @@ class TreeEigensolverBinary():
                 self.cache_phatneg[beta] = phatneg[i]
             
             # properly weighted average of DKL
-            solvedDkl[i] = ( dkl * phat[i] ).dot(self.M)
+            solvedDkl[i] = ( dkl * phatavg[i] ).dot(self.M)
 
         return solvedDkl
 #end TreeEigensolverBinary
