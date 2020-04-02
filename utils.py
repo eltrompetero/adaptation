@@ -16,6 +16,20 @@ def pminus(h):
     """Probability of - given the field."""
     return .5 - .5*np.tanh(h)
 
+def entropy(h):
+    """Entropy of biased coin.
+
+    Parameters
+    ----------
+    h : float
+
+    Returns
+    -------
+    float
+    """
+
+    return -pplus(h) * np.log2(pplus(h)) - pminus(h) * np.log2(pminus(h))
+
 def linspace_beta(tau_mn, tau_mx, n):
     """Convenience function for creating range of beta such that the memory timescales are
     equally spaced in log space.

@@ -442,7 +442,7 @@ class VisionBinary():
                         None,
                         None)
 
-            solver = VisionBinary(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
+            solver = self.__class__(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
             phatavg, errflag, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
             return phatavg, phatpos, phatneg
         
@@ -460,7 +460,7 @@ class VisionBinary():
             solvedDkl[i] = ( dkl * phatavg[i] ).dot(self.M)
 
         return solvedDkl
-#end TreeEigensolverBinary
+#end VisionBinary
 
 
 
@@ -473,5 +473,5 @@ class StigmergyBinary(VisionBinary):
         # lambda term will be multiplied by 1-1/tau
         self.staycoeff *= 1 - v / ((self.h0-self.x[None,:])**2 + v)
         # lambda term will be multiplied by 1/tau
-        self.leavecoeff *= 1 + (self.tau - 1) * v / ((self.h0-self.x[None,:])**2 + v)
-#end TreeEigensolverBinary
+        self.leavecoeff *= 1 + v * (1-1/self.tau) * self.tau / ((self.h0-self.x[None,:])**2 + v)
+#end StigmergyBinary

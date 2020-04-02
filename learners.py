@@ -106,7 +106,7 @@ class Vision():
         self.beta = beta
         self.alpha = 1 - beta
 
-    def learn(self, beta_range, **kwargs):
+    def learn(self, beta_range, n_cpus=None, **kwargs):
         """Learn distribution of environment as it evolves for a range of beta values.
 
         Parameters
@@ -114,10 +114,17 @@ class Vision():
         beta_range : ndarray
             Learning weight for aggregator, effectively setting the time scale for the
             feedback loop.
+        n_cpus : int, None
         use_other_dkl : bool, False
             Default is to measure probability distribution of h instead of hhat. Note that
             using hhat as probability distribution can lead to infinities from numerical
             precision errors.
+
+        Returns
+        -------
+        ndarray
+            Averaged Kullback-Leibler divergence per given value of beta. Full simulation
+            results are saved in self.dkl.
         """
 
         if beta_range is None:
@@ -128,20 +135,29 @@ class Vision():
         hhat, H, dkl = {}, {}, {}
         rng = deepcopy(self.rng)
         
-        for beta in beta_range:
+        def loop_wrapper(args):
+            beta, rng = args
             self.update_beta(beta)
-            # reset rng every loop so that random trajectory remains the same
-            self.rng = deepcopy(rng)
             #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
-            out = jit_learn_vision(self.rng.randint(2**32-1),
-                                   self.T,
-                                   self.h,
-                                   self.nBatch,
-                                   self.beta,
-                                   self.alpha)
-            hhat[beta], H[beta], dkl[beta] = out
+            return jit_learn_vision(self.rng.randint(2**32-1),
+                                    self.T,
+                                    self.h,
+                                    self.nBatch,
+                                    self.beta,
+                                    self.alpha)
+        
+        if not n_cpus is None and n_cpus>1:
+            with mp.Pool(n_cpus) as pool:
+                hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, zip(beta_range, [rng]*beta_range.size))))
+                hhat = dict(zip(beta_range, hhat_))
+                H = dict(zip(beta_range, H_))
+                dkl = dict(zip(beta_range, dkl_))
+        else:
+            for beta in beta_range:
+                hhat[beta], H[beta], dkl[beta] = loop_wrapper((beta, deepcopy(rng)))
 
         self.hhat, self.H, self.dkl = hhat, H, dkl
+        return np.array([i.mean() for i in dkl.values()])
 
     def _learn(self, use_other_dkl=False):
         """Learn distribution of environment as it evolves.
@@ -313,7 +329,7 @@ class Stigmergy(Vision):
         self.beta = beta
         self.alpha = 1 - beta
    
-    def learn(self, beta_range):
+    def learn(self, beta_range, n_cpus=None):
         """Learn distribution of environment as it evolves over a range of beta values.
 
         Parameters
@@ -321,6 +337,7 @@ class Stigmergy(Vision):
         beta_range : ndarray
             Learning weight for aggregator, effectively setting the time scale for the
             feedback loop.
+        n_cpus : int, None
         """
 
         if beta_range is None:
@@ -331,7 +348,9 @@ class Stigmergy(Vision):
         h, hhat, H, dkl = {}, {}, {}, {}
         rng = deepcopy(self.rng)
         
-        for beta in beta_range:
+        def loop_wrapper(args):
+            beta, rng = args
+
             self.update_beta(beta)
             # reset rng every loop so that random trajectory remains the same
             self.rng = deepcopy(rng)
@@ -340,9 +359,9 @@ class Stigmergy(Vision):
             #h[beta], hhat[beta], H[beta], dkl[beta] = self._learn()
             # call fast jit version
             if self.noise['type']=='ou':
-                out = jit_learn_stigmergy(self.rng.randint(2**32-1), self.T, self.u, self.v,
-                                          self.dragh, self.dh,
-                                          self.nBatch, self.beta, self.alpha)
+                return jit_learn_stigmergy(self.rng.randint(2**32-1), self.T, self.u, self.v,
+                                           self.dragh, self.dh,
+                                           self.nBatch, self.beta, self.alpha)
             else:
                 # set up noise for use with njit
                 noise = self.noise.copy()
@@ -352,13 +371,24 @@ class Stigmergy(Vision):
                 for k, v in noise.items():
                     jitnoise[k] = v
 
-                out = jit_learn_stigmergy_binary_noise(self.rng.randint(2**32-1), self.T, self.u, self.v,
-                                                       jitnoise, self.nBatch, self.beta, self.alpha)
-            
+                return jit_learn_stigmergy_binary_noise(self.rng.randint(2**32-1), self.T, self.u, self.v,
+                                                        jitnoise, self.nBatch, self.beta, self.alpha)
+           
+        if not n_cpus is None and n_cpus>1:
+            with mp.Pool(n_cpus) as pool:
+                h_, hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper,
+                                                         zip(beta_range, [rng]*beta_range.size))))
             # read output
-            h[beta], hhat[beta], H[beta], dkl[beta] = out
+            h = dict(zip(beta_range, h_))
+            hhat = dict(zip(beta_range, hhat_))
+            H = dict(zip(beta_range, H_))
+            dkl = dict(zip(beta_range, dkl_))
+        else:
+            for beta in beta_range:
+                h[beta], hhat[beta], H[beta], dkl[beta] = loop_wrapper((beta, deepcopy(rng)))
 
         self.h, self.hhat, self.H, self.dkl = h, hhat, H, dkl
+        return np.array([i.mean() for i in dkl.values()])
 
     def _learn(self):
         """Learn distribution of environment as it evolves and is learned through
