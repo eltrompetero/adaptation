@@ -47,7 +47,8 @@ def linspace_beta(tau_mn, tau_mx, n):
     -------
     ndarray
     """
+    
+    assert 0<tau_mn<tau_mx
+    assert n>1
 
-    return 1 / (1 + np.exp(-np.linspace(np.log(tau_mn),                
-                                        np.log(tau_mx), n)))       
-
+    return np.exp(-1/np.logspace(np.log10(tau_mn), np.log10(tau_mx), n))

@@ -329,7 +329,9 @@ class Stigmergy(Vision):
         self.beta = beta
         self.alpha = 1 - beta
    
-    def learn(self, beta_range, n_cpus=None):
+    def learn(self, beta_range,
+              n_cpus=None,
+              save=True):
         """Learn distribution of environment as it evolves over a range of beta values.
 
         Parameters
@@ -338,6 +340,7 @@ class Stigmergy(Vision):
             Learning weight for aggregator, effectively setting the time scale for the
             feedback loop.
         n_cpus : int, None
+        save : bool, True
         """
 
         if beta_range is None:
@@ -386,8 +389,9 @@ class Stigmergy(Vision):
         else:
             for beta in beta_range:
                 h[beta], hhat[beta], H[beta], dkl[beta] = loop_wrapper((beta, deepcopy(rng)))
-
-        self.h, self.hhat, self.H, self.dkl = h, hhat, H, dkl
+        
+        if save:
+            self.h, self.hhat, self.H, self.dkl = h, hhat, H, dkl
         return np.array([i.mean() for i in dkl.values()])
 
     def _learn(self):
