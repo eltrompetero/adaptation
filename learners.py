@@ -291,7 +291,6 @@ class Stigmergy(Vision):
                  nBatch = 20,
                  T = 10_000,
                  beta = .1,
-                 action_params=(1,1),
                  rng=None):
         """
         Parameters
@@ -321,12 +320,9 @@ class Stigmergy(Vision):
         """
         
         assert nBatch>=1 and T>0
-        assert action_params[1]>=0
         self.nBatch = nBatch
         self.beta = beta
         self.alpha = 1 - beta
-        self.u = action_params[0]
-        self.v = action_params[1]
         self.T = T
         self.rng = rng or np.random.RandomState()
         self.noise = noise
@@ -341,7 +337,13 @@ class Stigmergy(Vision):
             self.dh = np.zeros(T)  # random noise
             self.dh[1:] = self.rng.normal(scale=sigmah, size=T-1)
         elif noise['type']=='binary':
-            pass
+            assert 'v' in noise.keys()
+            assert noise['v']!=0
+            if not 'weight' in noise.keys(): noise['weight'] = 1
+        elif noise['type']=='binary ant':
+            assert 'vd' in noise.keys()
+            assert 'vs' in noise.keys()
+            assert noise['vd']>=0 and noise['vs']>=0
         else:
             raise Exception("Bad noise type.")
         
@@ -392,8 +394,17 @@ class Stigmergy(Vision):
                     for k, v in noise.items():
                         jitnoise[k] = v
 
-                    return jit_learn_stigmergy_binary_noise(seed, self.T, self.u, self.v,
-                                                            jitnoise, self.nBatch, self.beta, self.alpha)
+                    if typ=='ant':
+                        return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                                                                    jitnoise,
+                                                                    self.nBatch,
+                                                                    self.beta)
+               
+                    else:
+                        return jit_learn_stigmergy_binary_noise(seed, self.T,
+                                                                jitnoise,
+                                                                self.nBatch,
+                                                                self.beta)
                
             if not n_cpus is None and n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
@@ -423,14 +434,24 @@ class Stigmergy(Vision):
                 else:
                     # set up noise for use with njit
                     noise = self.noise.copy()
+                    typ = noise['type']
                     del noise['type']
                     jitnoise = Dict.empty(key_type=types.unicode_type,
                                           value_type=types.float64)
                     for k, v in noise.items():
                         jitnoise[k] = v
-
-                    return jit_learn_stigmergy_binary_noise(seed, self.T, self.u, self.v,
-                                                            jitnoise, self.nBatch, self.beta, self.alpha)[-1]
+                    
+                    if typ=='binary ant':
+                        return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                                                                    jitnoise,
+                                                                    self.nBatch,
+                                                                    self.beta)[-1]
+               
+                    else:
+                        return jit_learn_stigmergy_binary_noise(seed, self.T,
+                                                                jitnoise,
+                                                                self.nBatch,
+                                                                self.beta)[-1]
                
             if not n_cpus is None and n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
@@ -579,7 +600,7 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
     return h, hhat, H, dkl
 
 @njit
-def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
+def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
     if seed!=-1:
         np.random.seed(seed)
     
@@ -589,14 +610,20 @@ def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
     dkl = np.zeros(T)
 
     h[0] = noise['scale']
+    v = noise['v']
+    tau = noise['tau']
+    decay = 0.
+    weight = noise['weight']
 
     for t in range(T):
         if t>0:
-            # action rate grows with the strength of the signal and with similarity
-            # between the two signals
-            #actionRate = u * h[t-1]**2 / ((h[t-1]-hhat[t-1])**2 + v)
-            actionRate = u / ((h[t-1]-hhat[t-1])**2 + v)
-            if np.random.rand() < (1 / noise['tau'] + actionRate):
+            # action rate determines env switching time
+            if v<0:  # dissipator
+                decay = 1 - binary_env_stay_rate(h[t-1]-hhat[t-1], tau, -v, -weight)
+            else:  # stabilizer
+                decay = 1 - binary_env_stay_rate(h[t-1]-hhat[t-1], tau, v, weight)
+
+            if np.random.rand() <= decay:
                 h[t] = -h[t-1]
             else:
                 h[t] = h[t-1]
@@ -622,7 +649,70 @@ def jit_learn_stigmergy_binary_noise(seed, T, u, v, noise, nBatch, beta, alpha):
             H[t] = hhat[t]
         else:
             # weighted combination of memory and current measurement
-            hhat[t] = beta * H[t-1] + alpha * np.arctanh(Xmu)
+            hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
+            H[t] = hhat[t]
+
+        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
+        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        if not np.isnan(term1):
+            dkl[t] += term1
+        if not np.isnan(term2):
+            dkl[t] += term2
+ 
+    return h, hhat, H, dkl
+
+@njit
+def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
+    if seed!=-1:
+        np.random.seed(seed)
+    
+    h = np.zeros(T)
+    hhat = np.zeros(T)
+    H = np.zeros(T)
+    dkl = np.zeros(T)
+
+    h[0] = noise['scale']
+    vd = noise['vd']
+    vs = noise['vs']
+    width = noise['width']
+    weight = noise['weight']
+    tau = noise['tau']
+
+    for t in range(T):
+        if t>0:
+            # transition from stabilizer far from h0 to dissipator close to h0
+            sdecay = 1 - binary_env_stay_rate(h[t-1]-hhat[t-1], tau, vs, weight)
+            ddecay = 1 - binary_env_stay_rate(h[t-1]-hhat[t-1], tau, vd, -weight)
+            crossfade = np.exp( -(h[t-1]-hhat[t-1])**2 / 2 / width**2 )
+            decay = (1-crossfade) * sdecay + crossfade * ddecay
+
+            if np.random.rand() < decay:
+                h[t] = -h[t-1]
+            else:
+                h[t] = h[t-1]
+
+        # simulate coin flip using environmental field
+        p = pplus(h[t])
+        X = np.zeros(nBatch)
+        for i in range(nBatch):
+            if np.random.rand()<p:
+                X[i] = 1
+            else:
+                X[i] = -1
+
+        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
+        Xmu = X.mean()
+        if Xmu<(-1+2/nBatch):
+            Xmu = -1+2/nBatch
+        if Xmu>(1-2/nBatch):
+            Xmu = 1-2/nBatch
+
+        if t==0:
+            hhat[t] = np.arctanh(Xmu)
+            H[t] = hhat[t]
+        else:
+            # weighted combination of memory and current measurement
+            hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
 
         term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
