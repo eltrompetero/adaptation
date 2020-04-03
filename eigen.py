@@ -467,11 +467,14 @@ class VisionBinary():
 class StigmergyBinary(VisionBinary):
     """Eigenvalue formulation for binary (h0, -h0) environment state.
     """
-    def _init_addon(self, v=1):
+    def _init_addon(self, v=1, weight=1):
         self.v = v
         
-        # lambda term will be multiplied by 1-1/tau
-        self.staycoeff *= 1 - v / ((self.h0-self.x[None,:])**2 + v)
-        # lambda term will be multiplied by 1/tau
-        self.leavecoeff *= 1 + v * (1-1/self.tau) * self.tau / ((self.h0-self.x[None,:])**2 + v)
+        if v>=0:
+            r = 1 + weight * v / (1 - 1/self.tau) / self.tau / ((self.h0-self.x[None,:])**2 + v)
+            # term will be multiplied by 1-1/tau
+            self.staycoeff *= r
+            # term will be multiplied by 1/tau
+            self.leavecoeff *= (1 - r * (1 - 1/self.tau)) * self.tau
+    #return 1 - 1/tau + weight * v / tau / (dh*dh + v)
 #end StigmergyBinary

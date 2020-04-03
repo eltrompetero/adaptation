@@ -388,13 +388,14 @@ class Stigmergy(Vision):
                 else:
                     # set up noise for use with njit
                     noise = self.noise.copy()
+                    typ = noise['type']
                     del noise['type']
                     jitnoise = Dict.empty(key_type=types.unicode_type,
                                           value_type=types.float64)
                     for k, v in noise.items():
                         jitnoise[k] = v
 
-                    if typ=='ant':
+                    if typ=='binary ant':
                         return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
                                                                     jitnoise,
                                                                     self.nBatch,
