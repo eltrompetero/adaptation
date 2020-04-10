@@ -176,8 +176,9 @@ class Vision():
             else:
                 for beta in beta_range:
                     dkl[beta] = loop_wrapper(beta)
-
-        return np.array([i.mean() for i in dkl.values()])
+        
+        # TODO: need to set better default timescale for averaging
+        return np.array([i[1000:].mean() for i in dkl.values()])
 
     def _learn(self, use_other_dkl=False):
         """Learn distribution of environment as it evolves.
@@ -462,8 +463,8 @@ class Stigmergy(Vision):
             else:
                 for beta in beta_range:
                     dkl[beta] = loop_wrapper(beta)
- 
-        # need to set better default timeescale to not average over
+         
+        # TODO: need to set better default timeescale to not average over
         return np.array([i[1000:].mean() for i in dkl.values()])
 
     def _learn(self):
