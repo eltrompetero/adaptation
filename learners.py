@@ -247,18 +247,7 @@ def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
                 X[i] = 1
             else:
                 X[i] = -1
-
-        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
         Xmu = X.mean()
-        # floating point precision limits
-        if Xmu<(-1+1e-15):
-            Xmu = -1+1e-15
-        if Xmu>(1-1e-15):
-            Xmu = 1-1e-15
-        #if Xmu<(-1+2/nBatch):
-        #    Xmu = -1+2/nBatch
-        #if Xmu>(1-2/nBatch):
-        #    Xmu = 1-2/nBatch
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -268,8 +257,8 @@ def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
             hhat[t] = beta * H[t-1] + alpha * np.arctanh(Xmu)
             H[t] = hhat[t]
         
-        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
-        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
+        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
@@ -576,13 +565,7 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
                 X[i] = 1
             else:
                 X[i] = -1
-
-        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
         Xmu = X.mean()
-        if Xmu<(-1+2/nBatch):
-            Xmu = -1+2/nBatch
-        if Xmu>(1-2/nBatch):
-            Xmu = 1-2/nBatch
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -592,8 +575,8 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
             hhat[t] = beta * H[t-1] + alpha * np.arctanh(Xmu)
             H[t] = hhat[t]
         
-        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
-        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
+        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
@@ -638,13 +621,7 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
                 X[i] = 1
             else:
                 X[i] = -1
-
-        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
         Xmu = X.mean()
-        if Xmu<(-1+2/nBatch):
-            Xmu = -1+2/nBatch
-        if Xmu>(1-2/nBatch):
-            Xmu = 1-2/nBatch
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -654,8 +631,8 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
             hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
 
-        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
-        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
+        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
@@ -701,13 +678,7 @@ def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
                 X[i] = 1
             else:
                 X[i] = -1
-
-        # regularize estimate to avoid infinities. makes sure that Dkl never diverges
         Xmu = X.mean()
-        if Xmu<(-1+2/nBatch):
-            Xmu = -1+2/nBatch
-        if Xmu>(1-2/nBatch):
-            Xmu = 1-2/nBatch
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -717,8 +688,8 @@ def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
             hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
 
-        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
-        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
+        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
+        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
