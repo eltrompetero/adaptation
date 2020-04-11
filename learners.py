@@ -248,6 +248,11 @@ def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
             else:
                 X[i] = -1
         Xmu = X.mean()
+        # finite precision in agent estimates
+        if Xmu==-1:
+            Xmu += 1e-15
+        elif Xmu==1:
+            Xmu -= 1e-15
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -566,6 +571,11 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
             else:
                 X[i] = -1
         Xmu = X.mean()
+        # finite precision in agent estimates
+        if Xmu==-1:
+            Xmu += 1e-15
+        elif Xmu==1:
+            Xmu -= 1e-15
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -622,6 +632,11 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
             else:
                 X[i] = -1
         Xmu = X.mean()
+        # finite precision in agent estimates
+        if Xmu==-1:
+            Xmu += 1e-15
+        elif Xmu==1:
+            Xmu -= 1e-15
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
@@ -679,6 +694,11 @@ def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
             else:
                 X[i] = -1
         Xmu = X.mean()
+        # finite precision in agent estimates
+        if Xmu==-1:
+            Xmu += 1e-15
+        elif Xmu==1:
+            Xmu -= 1e-15
 
         if t==0:
             hhat[t] = np.arctanh(Xmu)
