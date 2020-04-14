@@ -332,7 +332,7 @@ class Stigmergy(Vision):
             self.dh = np.zeros(T)  # random noise
             self.dh[1:] = self.rng.normal(scale=sigmah, size=T-1)
         elif noise['type']=='binary':
-            assert 'v' in noise.keys()
+            assert 'v' in noise.keys() and 'scale' in noise.keys()
             assert noise['v']!=0
             if not 'weight' in noise.keys(): noise['weight'] = 1
         elif noise['type']=='binary ant':
@@ -348,7 +348,8 @@ class Stigmergy(Vision):
    
     def learn(self, beta_range,
               n_cpus=None,
-              save=True):
+              save=True,
+              return_stab_cost=False):
         """Learn distribution of environment as it evolves over a range of beta values.
 
         Parameters
@@ -358,6 +359,7 @@ class Stigmergy(Vision):
             feedback loop.
         n_cpus : int, None
         save : bool, True
+        return_stab_cost : bool, False
         """
 
         if beta_range is None:
@@ -365,7 +367,7 @@ class Stigmergy(Vision):
         assert np.unique(beta_range).size==len(beta_range)
         assert all([0<=b<=1 for b in beta_range])
 
-        h, hhat, H, dkl = {}, {}, {}, {}
+        h, hhat, H, dkl, sCost = {}, {}, {}, {}, {}
         rng = deepcopy(self.rng)
         seed = rng.randint(2**32-1)
         
@@ -413,6 +415,13 @@ class Stigmergy(Vision):
             else:
                 for beta in beta_range:
                     h[beta], hhat[beta], H[beta], dkl[beta] = loop_wrapper(beta)
+
+            if return_stab_cost:
+                # calculate stabilizing cost
+                for beta in beta_range:
+                    sCost[beta] = stability_cost(self.noise, h[beta], hhat[beta])
+                self.sCost = sCost
+
             self.h, self.hhat, self.H, self.dkl = h, hhat, H, dkl
 
         else: # don't need to save all the data (and use much memory)
@@ -438,27 +447,43 @@ class Stigmergy(Vision):
                         jitnoise[k] = v
                     
                     if typ=='binary ant':
-                        return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
-                                                                    jitnoise,
-                                                                    self.nBatch,
-                                                                    self.beta)[-1]
-               
+                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                                                                               jitnoise,
+                                                                               self.nBatch,
+                                                                               self.beta)
+                        return dkl
                     else:
-                        return jit_learn_stigmergy_binary_noise(seed, self.T,
-                                                                jitnoise,
-                                                                self.nBatch,
-                                                                self.beta)[-1]
+                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise(seed, self.T,
+                                                                           jitnoise,
+                                                                           self.nBatch,
+                                                                           self.beta)
+                        if return_stab_cost:
+                            sCost = stability_cost(self.noise, h, hhat)
+                            return dkl, sCost
+                        return dkl
                
             if not n_cpus is None and n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
-                    dkl_ = list(pool.map(loop_wrapper, beta_range))
+                    if return_stab_cost:
+                        dkl_, sCost_ = list(zip(*pool.map(loop_wrapper, beta_range)))
+                    else:
+                        dkl_ = list(pool.map(loop_wrapper, beta_range))
                 # read output
                 dkl = dict(zip(beta_range, dkl_))
+                if return_stab_cost:
+                    sCost = dict(zip(beta_range, sCost_))
             else:
-                for beta in beta_range:
-                    dkl[beta] = loop_wrapper(beta)
+                if return_stab_cost:
+                    for beta in beta_range:
+                        dkl[beta], sCost[beta] = loop_wrapper(beta)
+                else:
+                    for beta in beta_range:
+                        dkl[beta] = loop_wrapper(beta)
          
         # TODO: need to set better default timeescale to not average over
+        if return_stab_cost:
+            return (np.array([i[1000:].mean() for i in dkl.values()]),
+                    np.array([i[1000:].mean() for i in sCost.values()]))
         return np.array([i[1000:].mean() for i in dkl.values()])
 
     def _learn(self):
@@ -607,7 +632,6 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
     h[0] = noise['scale']
     v = noise['v']
     tau = noise['tau']
-    decay = 0.
     weight = noise['weight']
 
     for t in range(T):
@@ -716,3 +740,30 @@ def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
             dkl[t] += term2
  
     return h, hhat, H, dkl
+
+
+
+# =============== #
+# Other functions #
+# =============== #
+def stability_cost(noise, h, hhat):
+    """Calculate stabilizing cost.
+
+    Parameters
+    ----------
+    noise : ndarray
+    h : ndarray
+    hhat : ndarray
+    tau : float
+
+    Returns
+    -------
+    ndarray
+    """
+
+    v, weight, tau = noise['v'], noise['weight'], noise['tau']
+    assert v>=0
+
+    decay = 1 - binary_env_stay_rate(h-hhat, tau, v, weight)  # decay prob
+    sCost = np.log( tau * (1/tau - decay) ) + 1/( tau * (1/tau - decay) ) - 1
+    return sCost / np.log(2)  # in units of bits

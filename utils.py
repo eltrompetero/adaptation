@@ -78,3 +78,12 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
     assert v>=0
 
     return 1 - 1/tau + weight * v / tau / (dh*dh + v)
+
+def memory_cost(t):
+    memCost = -(1/t/2) * np.log2(1/t/2) - (1-1/t/2) * np.log2(1-1/t/2)
+    memCost[np.isnan(memCost)] = 0
+    memCost *= -1
+    return memCost
+
+def sensing_cost(t):
+    return np.log(t * 2 * np.pi * np.exp(1)) / 2 / np.log(2)
