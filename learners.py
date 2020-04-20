@@ -765,5 +765,9 @@ def stability_cost(noise, h, hhat):
     assert v>=0
 
     decay = 1 - binary_env_stay_rate(h-hhat, tau, v, weight)  # decay prob
-    sCost = np.log( tau * (1/tau - decay) ) + 1/( tau * (1/tau - decay) ) - 1
-    return sCost / np.log(2)  # in units of bits
+    sCost = ((1/tau - decay) * np.log2( tau * (1/tau - decay) ) +
+             (1 - 1/tau + decay) * np.log2((1 - 1/tau + decay) / (1-1/tau)))
+    return sCost
+    #decay = 1 - binary_env_stay_rate(h-hhat, tau, v, weight)  # decay prob
+    #sCost = np.log( tau * (1/tau - decay) ) + 1/( tau * (1/tau - decay) ) - 1
+    #return sCost / np.log(2)  # in units of bits

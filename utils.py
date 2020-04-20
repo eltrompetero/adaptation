@@ -79,10 +79,21 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
 
     return 1 - 1/tau + weight * v / tau / (dh*dh + v)
 
-def memory_cost(t):
-    memCost = -(1/t/2) * np.log2(1/t/2) - (1-1/t/2) * np.log2(1-1/t/2)
+def memory_cost(t, minpos=0):
+    """
+    Parameters
+    ----------
+    t : ndarray
+    minpos: float, True
+        Set min offset so all values are above specified value.
+    """
+
+    memCost = -(1/t) * np.log2(1/t) - (1-1/t) * np.log2(1-1/t)
     memCost[np.isnan(memCost)] = 0
-    memCost *= -1
+    
+    # fixed offset
+    memCost += minpos
+
     return memCost
 
 def sensing_cost(t):
