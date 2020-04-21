@@ -255,7 +255,7 @@ def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
             Xmu -= 1e-15
 
         if t==0:
-            hhat[t] = np.arctanh(Xmu)
+            hhat[t] = alpha * np.arctanh(Xmu)
             H[t] = hhat[t]
         else:
             # weighted combination of memory and current measurement
@@ -663,7 +663,7 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
             Xmu -= 1e-15
 
         if t==0:
-            hhat[t] = np.arctanh(Xmu)
+            hhat[t] = (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
         else:
             # weighted combination of memory and current measurement
@@ -725,7 +725,7 @@ def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
             Xmu -= 1e-15
 
         if t==0:
-            hhat[t] = np.arctanh(Xmu)
+            hhat[t] = (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
         else:
             # weighted combination of memory and current measurement

@@ -305,7 +305,9 @@ class VisionBinary():
                             tol=1e-3,
                             tmax=20,
                             phat0=None,
-                            iprint=True):
+                            iprint=True,
+                            cache=True,
+                            recursion_check=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
         or before max steps is reached.
         
@@ -319,15 +321,24 @@ class VisionBinary():
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
+        cache : bool, True
+            If True, cache results.
+        recursion_check : bool, True
+            If True, reduce recusion by one to have a check for convergence.  This should
+            only be used internally by the function.
         
         Returns
         -------
         ndarray
             Solution.
-        ndarray
-            Symmetric solution. Good for checking convergence with recursion depth.
         int
             Error flag.
+        tuple of float
+            Eigenvalue solution error (change in functional form after repeated
+            iteration).
+            Difference from one step smaller recursion.
+        tuple of ndarrays
+            Separate solutions conditional on postive and neg external field.
         """
         
         newphat = np.ones_like(self.x)
@@ -349,6 +360,19 @@ class VisionBinary():
         else:
             assert phat0.size==self.x.size
             newphat = phat0
+
+        # solve on recursion_depth-1 to check for error
+        if recursion_check and recursion_depth>1:
+            phatavgToCheck = self.solve_external_cond(recursion_depth-1,
+                                                      tol=tol,
+                                                      tmax=tmax,
+                                                      phat0=newphat,
+                                                      iprint=False,
+                                                      cache=False,
+                                                      recursion_check=False)[0]
+            newphat = phatavgToCheck
+        else:
+            phatavgToCheck = newphat
         
         while counter<=tmax and err>tol:
             phatavg = newphatavg
@@ -370,42 +394,54 @@ class VisionBinary():
         if iprint:
             print("Done in %d steps."%counter)
             print("Error of %E."%err)
+        
+        if cache:
+            self.cache_phatpos[self.beta] = phatpos.copy()
+            self.cache_phatneg[self.beta] = phatneg.copy()
 
-        self.cache_phatpos[self.beta] = phatpos.copy()
-        self.cache_phatneg[self.beta] = phatneg.copy()
-        return  phatavg, errflag, (phatpos, phatneg)
+        if recursion_check:
+            recursionErr = np.sqrt( ((phatavg - phatavgToCheck)**2).dot(self.M) )
+            return  phatavg, errflag, (err, recursionErr), (phatpos, phatneg)
+        return  phatavg, errflag, (err,), (phatpos, phatneg)
     
     def increase_depth(self, phat, o_recurse, delta_recurse,
-                       external_cond=False):
+                       external_cond=False, 
+                       **solve_kw):
         """Given solution to certain recursion depth, increase recursion depth.
         
         Parameters
         ----------
         phat : ndarray
+            Initial guess.
         o_recurse : ndarray
         delta_recurse: ndarray
         external_cond : bool, False
+        **solve_kw
         
         Returns
         -------
         ndarray
-        ndarray (optional)
+            Probability density given positive external field.
+        ndarray
         int
             Error flag.
         float
             Norm change in density.
         """
         
+        # averaged over both pos and neg ext fields
         if not external_cond:
-            newphat, errflag = self.solve(o_recurse + delta_recurse,
-                                          phat0=phat)
-            err = np.sqrt( ((phat-newphat)**2).dot(self.M) )
-            return newphat, errflag, err
+            return self.solve(o_recurse + delta_recurse,
+                              phat0=phat, **solve_kw)
 
-        newphatpos, newphatneg, errflag = self.solve_external_cond(o_recurse + delta_recurse,
-                                                                   phat0=phat)
-        err = np.sqrt( ((phat-newphatpos)**2).dot(self.M) )
-        return newphatpos, newphatneg, errflag, err
+        # conditional on positive external week
+        output = self.solve_external_cond(o_recurse + delta_recurse,
+                                          phat0=phat,
+                                          recursion_check=False,
+                                          **solve_kw)
+        newphatavg, errflag, errs, (newphatpos, newphatneg) = output
+        errs = errs[0], np.sqrt( ((newphatavg - phat)**2).dot(self.M) )
+        return newphatavg, errflag, errs, (newphatpos, newphatneg)
 
     def dkl(self, beta_range, recurse,
             n_cpus=None,
@@ -431,8 +467,11 @@ class VisionBinary():
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
         solvedDkl = np.zeros_like(beta_range)
-        dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
-               pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
+        # dkl as a function of x to be average by density later
+        dkl = (pplus(self.x) * ( np.log(pplus(self.x)) - np.log(pplus(self.h0)) ) +
+               pminus(self.x) * ( np.log(pminus(self.x)) - np.log(pminus(self.h0)) ))
+        #dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
+        #       pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
 
         def loop_wrapper(args):
             i, beta, recurse = args
@@ -443,7 +482,9 @@ class VisionBinary():
                         None)
 
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
-            phatavg, errflag, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
+            phatavg, errflag, errs, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
+            if errs[1]>1:
+                print("Large error in recursive solution for beta = %f."%beta)
             return phatavg, phatpos, phatneg
         
         with threadpool_limits(limits=1, user_api='blas'):
