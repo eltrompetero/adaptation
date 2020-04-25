@@ -132,6 +132,8 @@ class Vision():
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
         assert all([0<=b<=1 for b in beta_range])
+        if n_cpus is None:
+            n_cpus = cpu_count()-1
 
         hhat, H, dkl = {}, {}, {}
         rng = deepcopy(self.rng)
@@ -148,7 +150,7 @@ class Vision():
                                         self.beta,
                                         self.alpha)
             
-            if not n_cpus is None and n_cpus>1:
+            if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
                     hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                     hhat = dict(zip(beta_range, hhat_))
@@ -169,7 +171,7 @@ class Vision():
                                         self.beta,
                                         self.alpha)[-1]
             
-            if not n_cpus is None and n_cpus>1:
+            if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
                     dkl_ = list(pool.map(loop_wrapper, beta_range))
                     dkl = dict(zip(beta_range, dkl_))
@@ -366,6 +368,8 @@ class Stigmergy(Vision):
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
         assert all([0<=b<=1 for b in beta_range])
+        if n_cpus is None:
+            n_cpus = cpu_count()-1
 
         h, hhat, H, dkl, sCost = {}, {}, {}, {}, {}
         rng = deepcopy(self.rng)
@@ -404,7 +408,7 @@ class Stigmergy(Vision):
                                                                 self.nBatch,
                                                                 self.beta)
                
-            if not n_cpus is None and n_cpus>1:
+            if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
                     h_, hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                 # read output
@@ -462,7 +466,7 @@ class Stigmergy(Vision):
                             return dkl, sCost
                         return dkl
                
-            if not n_cpus is None and n_cpus>1:
+            if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
                     if return_stab_cost:
                         dkl_, sCost_ = list(zip(*pool.map(loop_wrapper, beta_range)))
