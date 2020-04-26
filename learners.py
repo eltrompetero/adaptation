@@ -147,8 +147,7 @@ class Vision():
                                         self.T,
                                         self.h,
                                         self.nBatch,
-                                        self.beta,
-                                        self.alpha)
+                                        self.beta)
             
             if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
@@ -168,8 +167,7 @@ class Vision():
                                         self.T,
                                         self.h,
                                         self.nBatch,
-                                        self.beta,
-                                        self.alpha)[-1]
+                                        self.beta)[-1]
             
             if n_cpus>1:
                 with mp.Pool(n_cpus) as pool:
@@ -229,7 +227,7 @@ class Vision():
 #end Vision
 
 @njit
-def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
+def jit_learn_vision(seed, T, h, nBatch, beta):
     """Jit version of Vision._learn().
     """
 
@@ -257,11 +255,11 @@ def jit_learn_vision(seed, T, h, nBatch, beta, alpha):
             Xmu -= 1e-15
 
         if t==0:
-            hhat[t] = alpha * np.arctanh(Xmu)
+            hhat[t] = (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
         else:
             # weighted combination of memory and current measurement
-            hhat[t] = beta * H[t-1] + alpha * np.arctanh(Xmu)
+            hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
         
         term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))

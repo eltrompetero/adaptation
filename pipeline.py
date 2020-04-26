@@ -1,7 +1,7 @@
-# ===================================================================================== #
+# ====================================================================================== #
 # Module for pipelining calculations needed for paper.
 # Author : Eddie Lee, edlee@santafe.edu
-# ===================================================================================== #
+# ====================================================================================== #
 import numpy as np
 from pyutils.learners import *
 from multiprocess import cpu_count
@@ -51,7 +51,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
     # stabilizer
     if run_stabilizer:
         kwargs = {'noise':{'type':'binary', 'scale':.2, 'weight':.95, 'v':.01},
-                  'T':10_000_000,
+                  'T':100_000_000,
                   'nBatch':1_000}
         learners = []
         dkl = {}

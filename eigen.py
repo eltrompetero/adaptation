@@ -297,7 +297,7 @@ class VisionBinary():
                 phat_neg += d[::-1]
         newphat += d
         
-        return phat, phat_pos, phat_neg
+        return newphat, phat_pos, phat_neg
 
     def solve_external_cond(self,
                             recursion_depth,
