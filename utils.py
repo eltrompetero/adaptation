@@ -4,6 +4,7 @@
 # ====================================================================================== #
 import numpy as np
 from numba import njit
+from multiprocess import cpu_count
 
 
 @njit
@@ -77,3 +78,23 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
     assert v>=0
 
     return 1 - 1/tau + weight * v / tau / (dh*dh + v)
+
+def memory_cost(t, minpos=0):
+    """
+    Parameters
+    ----------
+    t : ndarray
+    minpos: float, True
+        Set min offset so all values are above specified value.
+    """
+
+    memCost = -(1/t) * np.log2(1/t) - (1-1/t) * np.log2(1-1/t)
+    memCost[np.isnan(memCost)] = 0
+    
+    # fixed offset
+    memCost += minpos
+
+    return memCost
+
+def sensing_cost(t):
+    return np.log(t * 2 * np.pi * np.exp(1)) / 2 / np.log(2)
