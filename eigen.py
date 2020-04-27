@@ -558,7 +558,6 @@ class StigmergyBinary(VisionBinary):
         dh = self.h0 - self.x[None,:]
         if v>=0:
             stayprob = binary_env_stay_rate(dh, self.tau, v, weight)
-            #r = 1 + weight * v / (1 - 1/self.tau) / self.tau / ((self.h0-self.x[None,:])**2 + v)
             
             # term will be multiplied by 1-1/tau
             self.staycoeff *= stayprob / (1 - 1/self.tau)
