@@ -81,11 +81,11 @@ class VisionBinary():
         return
         
     def stay(self, phat):
-        """Transformation of density for external fields that stay the same."""
+        """Transformation of density given that external field stays the same."""
         return self.trapz_row(phat[None,:] * self.staycoeff) / (1-self.beta)
 
     def leave(self, phat):
-        """Transformation of density for external fields that leave for the other side."""
+        """Transformation of density given that external field flips in sign."""
         return self.trapz_row(phat[None,:] * self.leavecoeff) / (1-self.beta)
 
     def apply_transform(self,
@@ -146,8 +146,8 @@ class VisionBinary():
     def solve(self,
               recursion_depth,
               no_of_one_degree_steps=3,
-              tol=1e-3,
-              tmax=20,
+              tol=1e-5,
+              tmax=30,
               phat0=None,
               iprint=True,
               symmetrize=True,
@@ -228,28 +228,79 @@ class VisionBinary():
         self.cache_phat[self.beta] = phat.copy()
         return phat, errflag
 
+    def iter_cond_tree(self,
+                       phat,
+                       recurse=False):
+        """
+        Parameters
+        ----------
+        recurse : int, False
+
+        Returns
+        -------
+        ndarray
+        ndarray
+        """
+
+        assert recurse>=0
+        
+        leaves = [phat]
+        sign = [1]
+
+        for i in range(recurse+1):
+            newleaves = []
+            newsign = []
+            for s, leaf in zip(sign, leaves):
+                # starting with + and staying
+                newleaves.append( (1 - 1/self.tau) * self.stay(leaf) )
+                newsign.append(s)
+
+                # starting with + and switching to -
+                newleaves.append( 1/self.tau * self.leave(leaf[::-1]) )
+                newsign.append(-s)
+
+            leaves = newleaves
+            sign = newsign
+        
+        phat_pos = np.zeros_like(self.x)
+        phat_neg = np.zeros_like(self.x)
+        parity = 0
+        for s, leaf in zip(sign, leaves):
+            if parity==0:
+                if s==1:
+                    phat_pos += leaf
+                else:
+                    phat_neg += leaf
+            else:
+                if s==-1:
+                    phat_pos += leaf[::-1]
+                else:
+                    phat_neg += leaf[::-1]
+            parity = (parity+1)%2
+
+        return phat_pos, phat_neg
+
     def apply_transform_cond_external(self,
                                       phat,
                                       sign,
                                       recurse=False,
                                       phat_pos=None,
-                                      phat_neg=None,
                                       run_checks=False):
-        """One iteration of probability density transformation while keeping track of
+        """Imagine starting a system with equal probability on h0 and -h0. Then, one
+        iteration of transformation will maintain probability density with weight
+        (1-1/tau) conditional on starting at h0.  At the same time, probability with
+        weight 1/tau will flow in from -h0. Recurse.
+
+        One iteration of probability density transformation while keeping track of
         density separately conditional on external field. 
 
         This is the eigenvalue problem except that we are keeping track of the
         conditional probability distributions separately. The recursion number tells us
         the order of the expansion.
 
-        Since h0 and -h0 are symmetric, we actually can compare the two distributions to
-        see how well we've converged (errors are +/- of each other), i.e., we can take
-        average.
-        
         Parameters
         ----------
         phat_pos : ndarray
-        phat_neg : ndarray
         sign : int, +/-1
             Sign indicates if we're starting from  (+) or - (-). This is necessary to
             determine which newphat we add the contribution to since exploit the symmetry
@@ -262,47 +313,39 @@ class VisionBinary():
         ndarray
         ndarray
         """
-
-        assert recurse>=0
-        assert sign==1 or sign==-1
+        
+        if run_checks:
+            assert recurse>=0
+            assert sign==1 or sign==-1
         
         newphat = np.zeros_like(self.x)
         if phat_pos is None:
             phat_pos = np.zeros_like(self.x)
-            phat_neg = np.zeros_like(self.x)
 
-        # starting with  and staying at 
+        # starting with + and staying
         d = (1 - 1/self.tau) * self.stay(phat)
         if recurse:
             d = self.apply_transform_cond_external(d, sign, recurse-1,
-                                                   phat_pos=phat_pos,
-                                                   phat_neg=phat_neg)[0]
+                                                   phat_pos=phat_pos)[0]
         else:  # if we've reached leaves of the recursion tree
-            if sign==1:
-                phat_pos += d
-            else:
-                phat_neg += d
+            phat_pos += d
         newphat += d
 
-        # starting with  and switching to -
+        # probability density flowing in from mirrored config
         d = 1/self.tau * self.leave(phat)
         if recurse:
             d = self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
-                                                   phat_pos=phat_pos,
-                                                   phat_neg=phat_neg)[0]
+                                                   phat_pos=phat_pos)[0]
         else:  # if we've reached leaves of the recursion tree
-            if sign==-1:
-                phat_pos += d[::-1]
-            else:
-                phat_neg += d[::-1]
-        newphat += d
+            phat_pos += d[::-1]
+        newphat += d[::-1]  # must be inverted by self.leave() is defined rel to h=h0
         
-        return newphat, phat_pos, phat_neg
+        return newphat, phat_pos
 
     def solve_external_cond(self,
                             recursion_depth,
                             no_of_one_degree_steps=3,
-                            tol=1e-3,
+                            tol=1e-5,
                             tmax=20,
                             phat0=None,
                             iprint=True,
@@ -343,8 +386,6 @@ class VisionBinary():
         
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
-        phatavg = np.zeros_like(self.x)
-        newphatavg = np.zeros_like(self.x)
 
         # setup while loop
         counter = 0
@@ -353,9 +394,9 @@ class VisionBinary():
         # first get approximate first order solution
         if phat0 is None:
             for i in range(no_of_one_degree_steps):
-                newphat, phatpos, phatneg = self.apply_transform_cond_external(newphat, 1, False)
-            newphatavg = phatpos + phatneg
-            newphatavg /= newphatavg.dot(self.M)
+                newphat /= newphat.dot(self.M)
+                phatpos = self.apply_transform_cond_external(newphat, 1, 0)[1]
+                newphat = phatpos
         # or use given starting approximation
         else:
             assert phat0.size==self.x.size
@@ -363,24 +404,24 @@ class VisionBinary():
 
         # solve on recursion_depth-1 to check for error
         if recursion_check and recursion_depth>1:
-            phatavgToCheck = self.solve_external_cond(recursion_depth-1,
-                                                      tol=tol,
-                                                      tmax=tmax,
-                                                      phat0=newphat,
-                                                      iprint=False,
-                                                      cache=False,
-                                                      recursion_check=False)[0]
-            newphat = phatavgToCheck
+            phatToCheck = self.solve_external_cond(recursion_depth-1,
+                                                   tol=tol,
+                                                   tmax=tmax,
+                                                   phat0=newphat,
+                                                   iprint=False,
+                                                   cache=False,
+                                                   recursion_check=False)[0]
         else:
-            phatavgToCheck = newphat
+            phatToCheck = newphat
         
+        # use recursion_depth-1 as starting point
+        oldphat = newphat = phatToCheck.copy()
         while counter<=tmax and err>tol:
-            phatavg = newphatavg
-            newphat, phatpos, phatneg = self.apply_transform_cond_external(newphat, 1, recursion_depth)
-            newphatavg = phatpos + phatneg
-            newphatavg /= newphatavg.dot(self.M)
+            newphat /= newphat.dot(self.M)
+            newphat = self.apply_transform_cond_external(newphat, 1, recursion_depth)[1]
 
-            err = np.sqrt( ((phatavg-newphatavg)**2).dot(self.M) )
+            err = np.sqrt( ((newphat-oldphat)**2).dot(self.M) )
+            oldphat = newphat
             counter += 1
 
         # set error flag
@@ -393,16 +434,14 @@ class VisionBinary():
         
         if iprint:
             print("Done in %d steps."%counter)
-            print("Error of %E."%err)
         
         if cache:
-            self.cache_phatpos[self.beta] = phatpos.copy()
-            self.cache_phatneg[self.beta] = phatneg.copy()
+            self.cache_phatpos[self.beta] = newphat.copy()
 
         if recursion_check:
-            recursionErr = np.sqrt( ((phatavg - phatavgToCheck)**2).dot(self.M) )
-            return  phatavg, errflag, (err, recursionErr), (phatpos, phatneg)
-        return  phatavg, errflag, (err,), (phatpos, phatneg)
+            recursionErr = np.sqrt( ((newphat - phatToCheck)**2).dot(self.M) )
+            return  newphat, errflag, (err, recursionErr)
+        return  newphat, errflag, (err,)
     
     def increase_depth(self, phat, o_recurse, delta_recurse,
                        external_cond=False, 
@@ -476,29 +515,33 @@ class VisionBinary():
         def loop_wrapper(args):
             i, beta, recurse = args
             
-            if beta in self.cache_phatneg.keys():
-                return ((self.cache_phatneg[beta] + self.cache_phatpos[beta])/2,
-                        None,
-                        None)
-
-            solver = self.__class__(self.tau, self.h0, beta, self.nBatch, dx=self.dx, L=self.L)
-            phatavg, errflag, errs, (phatpos, phatneg) = solver.solve_external_cond(recurse, **kwargs)
+            if beta in self.cache_phatpos.keys():
+                return self.cache_phatpos[beta]
+            
+            if 'v' in self.__dict__.keys():
+                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                        dx=self.dx, L=self.L, v=self.v, weight=self.weight)
+            else:
+                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                        dx=self.dx, L=self.L)
+            phatpos, errflag, errs = solver.solve_external_cond(recurse, **kwargs)
+            if errs[0]>1:
+                print("Large iteration error %f for beta = %f."%(errs[0],beta))
             if errs[1]>1:
-                print("Large error in recursive solution for beta = %f."%beta)
-            return phatavg, phatpos, phatneg
+                print("Large recursion error %f for beta = %f."%(errs[1],beta))
+            return phatpos
         
         with threadpool_limits(limits=1, user_api='blas'):
             with mp.Pool(n_cpus) as pool:
                 args = zip(range(beta_range.size), beta_range, recurse)
-                phatavg, phatpos, phatneg = list(zip(*pool.map(loop_wrapper, args)))
+                phatpos = list(pool.map(loop_wrapper, args))
         
         for i, beta in enumerate(beta_range):
-            if not beta in self.cache_phatneg.keys():
+            if not beta in self.cache_phatpos.keys():
                 self.cache_phatpos[beta] = phatpos[i]
-                self.cache_phatneg[beta] = phatneg[i]
             
             # properly weighted average of DKL
-            solvedDkl[i] = ( dkl * phatavg[i] ).dot(self.M)
+            solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
 
         return solvedDkl
 #end VisionBinary
@@ -510,12 +553,17 @@ class StigmergyBinary(VisionBinary):
     """
     def _init_addon(self, v=1, weight=1):
         self.v = v
+        self.weight = weight
         
+        dh = self.h0 - self.x[None,:]
         if v>=0:
-            r = 1 + weight * v / (1 - 1/self.tau) / self.tau / ((self.h0-self.x[None,:])**2 + v)
+            stayprob = binary_env_stay_rate(dh, self.tau, v, weight)
+            #r = 1 + weight * v / (1 - 1/self.tau) / self.tau / ((self.h0-self.x[None,:])**2 + v)
+            
             # term will be multiplied by 1-1/tau
-            self.staycoeff *= r
+            self.staycoeff *= stayprob / (1 - 1/self.tau)
             # term will be multiplied by 1/tau
-            self.leavecoeff *= (1 - r * (1 - 1/self.tau)) * self.tau
-    #return 1 - 1/tau + weight * v / tau / (dh*dh + v)
+            self.leavecoeff *= (1 - stayprob) * self.tau
+        else:
+            raise NotImplementedError
 #end StigmergyBinary
