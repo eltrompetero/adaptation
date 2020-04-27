@@ -12,7 +12,7 @@ from threadpoolctl import threadpool_limits
 
 
 
-class VisionBinary():
+class Vision():
     """Eigenvalue formulation for binary (h0, -h0) environment state.
     """
     def __init__(self, tau, h0, beta, nBatch,
@@ -544,11 +544,11 @@ class VisionBinary():
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
 
         return solvedDkl
-#end VisionBinary
+#end Vision
 
 
 
-class StigmergyBinary(VisionBinary):
+class Stigmergy(Vision):
     """Eigenvalue formulation for binary (h0, -h0) environment state.
     """
     def _init_addon(self, v=1, weight=1):
@@ -565,4 +565,4 @@ class StigmergyBinary(VisionBinary):
             self.leavecoeff *= (1 - stayprob) * self.tau
         else:
             raise NotImplementedError
-#end StigmergyBinary
+#end Stigmergy
