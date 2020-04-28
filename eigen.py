@@ -573,14 +573,14 @@ class Stigmergy(Vision):
         dh = self.h0 - self.x[None,:]
         if v>=0:
             stayprob = binary_env_stay_rate(dh, self.tau, v, weight)
-            
-            # term will be multiplied by 1-1/tau
-            if self.tau==1:
-                self.staycoeff *= 0
-            else:
-                self.staycoeff *= stayprob / (1 - 1/self.tau)
-            # term will be multiplied by 1/tau
-            self.leavecoeff *= (1 - stayprob) * self.tau
         else:
-            raise NotImplementedError
+            stayprob = binary_env_stay_rate(dh, self.tau, -v, -weight)
+            
+        # term will be multiplied by 1-1/tau
+        if self.tau==1:
+            self.staycoeff *= 0
+        else:
+            self.staycoeff *= stayprob / (1 - 1/self.tau)
+        # term will be multiplied by 1/tau
+        self.leavecoeff *= (1 - stayprob) * self.tau
 #end Stigmergy
