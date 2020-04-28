@@ -5,4 +5,4 @@
 # ====================================================================================== #
 from .utils import *
 from . import eigen
-from . import learners as agent
+from . import agent

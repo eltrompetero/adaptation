@@ -323,7 +323,10 @@ class Vision():
             phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
-        d = (1 - 1/self.tau) * self.stay(phat)
+        if self.tau==1:
+            d = np.zeros_like(self.x)
+        else:
+            d = (1 - 1/self.tau) * self.stay(phat)
         if recurse:
             d = self.apply_transform_cond_external(d, sign, recurse-1,
                                                    phat_pos=phat_pos)[0]
@@ -343,10 +346,11 @@ class Vision():
         return newphat, phat_pos
 
     def solve_external_cond(self,
-                            recursion_depth,
+                            mn_recursion_depth=1,
+                            mx_recursion_depth=7,
                             no_of_one_degree_steps=3,
                             tol=1e-5,
-                            tmax=20,
+                            tmax=15,
                             phat0=None,
                             iprint=True,
                             cache=True,
@@ -356,10 +360,11 @@ class Vision():
         
         Parameters
         ----------
-        recursion_depth : int
+        mn_recursion_depth : int, 1
+        mx_recursion_depth : int, 6
         no_of_one_degree_steps : int, 3
             Number of first order approximations to run to get an approximate starting form.
-        tol : float, 1e-3
+        tol : float, 1e-5
         tmax : int, 20
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
@@ -383,13 +388,9 @@ class Vision():
         tuple of ndarrays
             Separate solutions conditional on postive and neg external field.
         """
-        
+ 
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
-
-        # setup while loop
-        counter = 0
-        err = tol * 10
 
         # first get approximate first order solution
         if phat0 is None:
@@ -402,19 +403,74 @@ class Vision():
             assert phat0.size==self.x.size
             newphat = phat0
 
+        depth = mn_recursion_depth
+        errs = (0, np.inf)
+        while depth<mx_recursion_depth and errs[1]>tol:
+            newphat, errflag, errs, steps = self._solve_external_cond(newphat, depth)
+            depth += 1
+
+        if iprint:
+            print("Done in %d steps to depth %d."%(steps,depth))
+        
+        if cache:
+            self.cache_phatpos[self.beta] = newphat.copy()
+
+        return  newphat, errflag, errs, depth
+
+    def _solve_external_cond(self,
+                             phat0,
+                             recursion_depth,
+                             tol=1e-5,
+                             tmax=20,
+                             cache=True,
+                             recursion_check=True):
+        """For a given recursion depth, find the solution that satisfies the given tolerance
+        or before max steps is reached.
+        
+        Parameters
+        ----------
+        phat0 : ndarray
+            Starting solution. Otherwise, it is approximated using the tree to depth 1.
+        recursion_depth : int
+        tol : float, 1e-5
+        tmax : int, 20
+        cache : bool, True
+            If True, cache results.
+        recursion_check : bool, True
+            If True, reduce recusion by one to have a check for convergence.  This should
+            only be used internally by the function.
+        
+        Returns
+        -------
+        ndarray
+            Solution.
+        int
+            Error flag.
+        tuple of float
+            Eigenvalue solution error (change in functional form after repeated
+            iteration).
+            Difference from one step smaller recursion.
+        tuple of ndarrays
+            Separate solutions conditional on postive and neg external field.
+        """
+        
+        assert phat0.size==self.x.size
+        newphat = phat0
+        err = tol * 10
+
         # solve on recursion_depth-1 to check for error
         if recursion_check and recursion_depth>1:
-            phatToCheck = self.solve_external_cond(recursion_depth-1,
-                                                   tol=tol,
-                                                   tmax=tmax,
-                                                   phat0=newphat,
-                                                   iprint=False,
-                                                   cache=False,
-                                                   recursion_check=False)[0]
+            phatToCheck = self._solve_external_cond(newphat,
+                                                    recursion_depth-1,
+                                                    tol=tol,
+                                                    tmax=tmax,
+                                                    cache=False,
+                                                    recursion_check=False)[0]
         else:
             phatToCheck = newphat
         
         # use recursion_depth-1 as starting point
+        counter = 0
         oldphat = newphat = phatToCheck.copy()
         while counter<=tmax and err>tol:
             newphat /= newphat.dot(self.M)
@@ -432,57 +488,16 @@ class Vision():
         if err>tol:
             errflag = 2
         
-        if iprint:
-            print("Done in %d steps."%counter)
-        
         if cache:
             self.cache_phatpos[self.beta] = newphat.copy()
 
         if recursion_check:
             recursionErr = np.sqrt( ((newphat - phatToCheck)**2).dot(self.M) )
-            return  newphat, errflag, (err, recursionErr)
-        return  newphat, errflag, (err,)
+            return  newphat, errflag, (err, recursionErr), counter 
+        return  newphat, errflag, (err,), counter
     
-    def increase_depth(self, phat, o_recurse, delta_recurse,
-                       external_cond=False, 
-                       **solve_kw):
-        """Given solution to certain recursion depth, increase recursion depth.
-        
-        Parameters
-        ----------
-        phat : ndarray
-            Initial guess.
-        o_recurse : ndarray
-        delta_recurse: ndarray
-        external_cond : bool, False
-        **solve_kw
-        
-        Returns
-        -------
-        ndarray
-            Probability density given positive external field.
-        ndarray
-        int
-            Error flag.
-        float
-            Norm change in density.
-        """
-        
-        # averaged over both pos and neg ext fields
-        if not external_cond:
-            return self.solve(o_recurse + delta_recurse,
-                              phat0=phat, **solve_kw)
-
-        # conditional on positive external week
-        output = self.solve_external_cond(o_recurse + delta_recurse,
-                                          phat0=phat,
-                                          recursion_check=False,
-                                          **solve_kw)
-        newphatavg, errflag, errs, (newphatpos, newphatneg) = output
-        errs = errs[0], np.sqrt( ((newphatavg - phat)**2).dot(self.M) )
-        return newphatavg, errflag, errs, (newphatpos, newphatneg)
-
-    def dkl(self, beta_range, recurse,
+    def dkl(self, beta_range,
+            recurse=None,
             n_cpus=None,
             **kwargs):
         """Calculate Kullback-Leibler divergence across a range of beta.
@@ -524,7 +539,7 @@ class Vision():
             else:
                 solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                         dx=self.dx, L=self.L)
-            phatpos, errflag, errs = solver.solve_external_cond(recurse, **kwargs)
+            phatpos, errflag, errs, depth = solver.solve_external_cond(**kwargs)
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
             if errs[1]>1:
@@ -560,7 +575,10 @@ class Stigmergy(Vision):
             stayprob = binary_env_stay_rate(dh, self.tau, v, weight)
             
             # term will be multiplied by 1-1/tau
-            self.staycoeff *= stayprob / (1 - 1/self.tau)
+            if self.tau==1:
+                self.staycoeff *= 0
+            else:
+                self.staycoeff *= stayprob / (1 - 1/self.tau)
             # term will be multiplied by 1/tau
             self.leavecoeff *= (1 - stayprob) * self.tau
         else:
