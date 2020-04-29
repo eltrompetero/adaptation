@@ -515,6 +515,9 @@ class Vision():
         -------
         ndarray
             Array of averaged Kullback-Leibler divergence.
+        ndarray
+            Array of errors for each point. First col is iteration error, second col is
+            recursion error.
         """
         
         if not hasattr(recurse, '__len__'):
@@ -544,13 +547,21 @@ class Vision():
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
             if errs[1]>1:
                 print("Large recursion error %f for beta = %f."%(errs[1],beta))
-            return phatpos
+            return phatpos, errs
         
-        with threadpool_limits(limits=1, user_api='blas'):
-            with mp.Pool(n_cpus) as pool:
-                args = zip(range(beta_range.size), beta_range, recurse)
-                phatpos = list(pool.map(loop_wrapper, args))
-        
+        args = zip(range(beta_range.size), beta_range, recurse)
+        if n_cpus>1:
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool(n_cpus) as pool:
+                    phatpos, errs = list(zip(*pool.map(loop_wrapper, args)))
+        else:
+            phatpos = []
+            errs = []
+            for arg in args:
+                output = loop_wrapper(arg)
+                phatpos.append(output[0])
+                errs.append(output[1])
+
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatpos.keys():
                 self.cache_phatpos[beta] = phatpos[i]
@@ -558,7 +569,67 @@ class Vision():
             # properly weighted average of DKL
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
 
-        return solvedDkl
+        return solvedDkl, np.vstack(errs)
+
+    @classmethod
+    def interpolate(cls, beta_range, dkl, errs, h0,
+                    tol=1e-4,
+                    deg=None,
+                    include_infty=True,
+                    method='chebyshev'):
+        """Interpolate calculated trajectory using known endpoints.
+
+        Only interpolate through points with sufficiently small errors.
+
+        Parameters
+        ----------
+        beta_range : ndarray
+        dkl : ndarray
+        errs : ndarray
+        tol : float, 1e-3
+            Error tolerance to use for deciding whether or not to fit points.
+        deg : int, None
+            Degree of polynomial to fit.
+        include_infty : bool, True
+        method : str, 'chebyshev'
+            Can be 'chebyshev' or 'cubic'
+
+        Returns
+        -------
+        function
+            Interpolated function of beta.
+        """
+
+        from scipy.interpolate import interp1d
+        from numpy.polynomial.chebyshev import chebfit, chebval
+        assert (np.diff(beta_range)>0).all()
+        assert beta_range.size==dkl.size==errs.shape[0]
+        if not deg is None:
+            assert deg<=beta_range.size
+
+        keepix = (errs<tol).all(1)
+        x = beta_range[keepix]
+        y = dkl[keepix]
+
+        if include_infty and x[-1]!=1:
+            x = np.append(x, 1)
+            y = np.append(y, -np.log(2) - np.log(pplus(h0)) / 2 - np.log(pminus(h0)) / 2)
+
+        if method=='cubic':
+            fit = interp1d(x, y, kind='cubic', fill_value="extrapolate")
+            return fit
+        elif method=='chebyshev': 
+            if deg is None:
+                deg = x.size - 1
+
+            # Chebyshev sometimes seems to extrapolate better but it can show strange
+            # divergence
+            # fitting to log does much better than linear space (probably because of sharp
+            # spike on the right side)
+            fit = chebfit(x*2-1, np.log(y), deg)
+            return lambda x, fit=fit: np.exp(chebval(x*2-1, fit))
+        else:
+            raise NotImplementedError
 #end Vision
 
 
@@ -584,3 +655,79 @@ class Stigmergy(Vision):
         # term will be multiplied by 1/tau
         self.leavecoeff *= (1 - stayprob) * self.tau
 #end Stigmergy
+
+
+    
+class Landscape():
+    def __init__(self, env_prop, agent_prop, beta_range, scale_range, nbatch_range):
+        """
+        Parameters
+        ----------
+        env_prop : dict
+        agent_prop : dict
+        beta_range : ndarray
+        scale_range : ndarray
+        nbatch_range : ndarray
+        """
+
+        self.scaleRange = scale_range
+        self.betaRange = beta_range
+        self.nBatchRange = nbatch_range
+
+        assert 'tau' in env_prop.keys()
+        self.envProp = env_prop
+
+        assert 'weight' in agent_prop.keys()
+        assert 'v' in agent_prop.keys()
+        self.agentProp = agent_prop
+
+    def run(self, n_cpus=None):
+        """Put every combination of scale, nbatch, and beta on a separate thread. Though
+        this will be expensive in terms of the time to start up each thread, it will not
+        have to wait for long recursions to finish before starting on a new instance of
+        Stigmergy.
+
+        Returns
+        -------
+        dict
+            Arrays of measured unfitness D.
+        dict
+            Arrays of errors from eigen calculation.
+        """
+
+        from itertools import product
+        nCpus = n_cpus or mp.cpu_count()-1
+
+        tau = self.envProp['tau']
+        weight = self.agentProp['weight']
+        v = self.agentProp['v']
+
+        def loop_wrapper(args):
+            scale, nbatch, beta = args
+            # must be careful to maintain small enough spacing for accurate computation
+            # note that we do not go beyond h0=1 for standard sims and following
+            # parameters suffice
+            solver = Stigmergy(tau, scale, 0, nbatch,
+                               L=max(.5,scale*2),
+                               dx=max(2.5e-4,scale/4000),
+                               weight=weight, v=v)
+            return solver.dkl(np.array([beta]), n_cpus=1)
+            
+
+        with threadpool_limits(limits=1, user_api='blas'):
+            with mp.Pool(nCpus) as pool:
+                args = product(self.scaleRange, self.nBatchRange, self.betaRange)
+                dkl_, errs_ = list(zip(*pool.map(loop_wrapper, args)))
+
+        # group by landscape axes
+        n = self.betaRange.size
+        dkl_ = [np.concatenate(dkl_[i*n:(i+1)*n]) for i in range(len(dkl_)//n)]
+        errs_ = [np.vstack(errs_[i*n:(i+1)*n]) for i in range(len(errs_)//n)]
+
+        errs, dkl = {}, {}
+        for i, (scale, nbatch) in enumerate(product(self.scaleRange, self.nBatchRange)):
+            dkl[(scale, nbatch)] = dkl_[i]
+            errs[(scale, nbatch)] = errs_[i]
+        
+        return dkl, errs
+#end Landscape

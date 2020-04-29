@@ -17,7 +17,7 @@ def pminus(h):
     """Probability of - given the field."""
     return .5 - .5*np.tanh(h)
 
-def entropy(h):
+def entropy(h, base=2):
     """Entropy of biased coin.
 
     Parameters
@@ -29,7 +29,7 @@ def entropy(h):
     float
     """
 
-    return -pplus(h) * np.log2(pplus(h)) - pminus(h) * np.log2(pminus(h))
+    return (-pplus(h) * np.log(pplus(h)) - pminus(h) * np.log(pminus(h))) / np.log(base)
 
 def linspace_beta(tau_mn, tau_mx, n):
     """Convenience function for creating range of beta such that the memory timescales are
@@ -53,6 +53,21 @@ def linspace_beta(tau_mn, tau_mx, n):
     assert n>1
 
     return np.exp(-1/np.logspace(np.log10(tau_mn), np.log10(tau_mx), n))
+
+def lobatto_beta(deg):
+    """Lobatto-Gauss points excluding beta=1 (corresponding to tau=infty).
+    
+    Parameters
+    ----------
+    deg : int
+
+    Returns
+    -------
+    ndarray
+    """
+
+    coX = -np.cos(np.pi*np.arange(deg+1)/deg)[:-1]
+    return (coX+1) / 2
 
 @njit
 def binary_env_stay_rate(dh, tau, v, weight=1):

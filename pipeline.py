@@ -3,7 +3,7 @@
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 import numpy as np
-from pyutils.learners import *
+from pyutils.agent import *
 from multiprocess import cpu_count
 from workspace.utils import save_pickle
 from itertools import product
@@ -48,25 +48,6 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/vision_agent_sim_tau_range.p', True)
 
-    # stabilizer
-    if run_stabilizer:
-        kwargs = {'noise':{'type':'binary', 'scale':.2, 'weight':.95, 'v':.01},
-                  'T':100_000_000,
-                  'nBatch':1_000}
-        learners = []
-        dkl = {}
-
-        for tau in tauRange:
-            kwargs['rng'] = np.random.RandomState(seed)
-            kwargs['noise']['tau'] = tau
-            learner = Stigmergy(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
-            learners.append(learner)
-            print("Done with tau=%1.1E."%tau)
-
-        save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
-                    'cache/stabilizer_agent_sim_tau_range.p', True)
-
     # dissipator
     if run_dissipator:
         kwargs = {'noise':{'type':'binary', 'scale':.2, 'weight':.95, 'v':-.01},
@@ -85,6 +66,25 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/dissipator_agent_sim_tau_range.p', True)
+
+    # stabilizer
+    if run_stabilizer:
+        kwargs = {'noise':{'type':'binary', 'scale':.2, 'weight':.95, 'v':.01},
+                  'T':100_000_000,
+                  'nBatch':1_000}
+        learners = []
+        dkl = {}
+
+        for tau in tauRange:
+            kwargs['rng'] = np.random.RandomState(seed)
+            kwargs['noise']['tau'] = tau
+            learner = Stigmergy(**kwargs)
+            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            learners.append(learner)
+            print("Done with tau=%1.1E."%tau)
+
+        save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
+                    'cache/stabilizer_agent_sim_tau_range.p', True)
 
 def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
     """Landscapes for optimal memory and memory/forgetting tradeoff. From "info
