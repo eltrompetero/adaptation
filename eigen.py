@@ -345,6 +345,7 @@ class Vision():
                             mx_recursion_depth=7,
                             no_of_one_degree_steps=3,
                             tol=1e-5,
+                            convergence_tol=1e6,
                             tmax=15,
                             phat0=None,
                             iprint=True,
@@ -360,6 +361,8 @@ class Vision():
         no_of_one_degree_steps : int, 3
             Number of first order approximations to run to get an approximate starting form.
         tol : float, 1e-5
+        convergence_tol : float, 1e6
+            Early termination criterion in case it is clear convergence is unlikely.
         tmax : int, 20
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
@@ -399,8 +402,8 @@ class Vision():
             newphat = phat0
 
         depth = mn_recursion_depth
-        errs = (0, np.inf)
-        while depth<mx_recursion_depth and errs[1]>tol:
+        errs = (0, tol+1)
+        while depth<mx_recursion_depth and convergence_tol>errs[1]>tol:
             newphat, errflag, errs, steps = self._solve_external_cond(newphat, depth)
             depth += 1
 
@@ -644,11 +647,73 @@ class Stigmergy(Vision):
             
         # term will be multiplied by 1-1/tau
         if self.tau==1:
-            self.staycoeff *= 0
+            self.staycoeff *= stayprob
         else:
             self.staycoeff *= stayprob / (1 - 1/self.tau)
         # term will be multiplied by 1/tau
         self.leavecoeff *= (1 - stayprob) * self.tau
+
+    def apply_transform_cond_external(self,
+                                      phat,
+                                      sign,
+                                      recurse=False,
+                                      phat_pos=None,
+                                      run_checks=False):
+        """Imagine starting a system with equal probability on h0 and -h0. Then, one
+        iteration of transformation will maintain probability density with weight
+        (1-1/tau) conditional on starting at h0.  At the same time, probability with
+        weight 1/tau will flow in from -h0. Recurse.
+
+        One iteration of probability density transformation while keeping track of
+        density separately conditional on external field. 
+
+        This is the eigenvalue problem except that we are keeping track of the
+        conditional probability distributions separately. The recursion number tells us
+        the order of the expansion.
+
+        Parameters
+        ----------
+        phat_pos : ndarray
+        sign : int, +/-1
+            Sign indicates if we're starting from  (+) or - (-). This is necessary to
+            determine which newphat we add the contribution to since exploit the symmetry
+            of this function to call this exact same function for the negative operation.
+        recurse : int, False
+        run_checks : bool, False
+
+        Returns
+        -------
+        ndarray
+        ndarray
+        """
+        
+        if run_checks:
+            assert recurse>=0
+            assert sign==1 or sign==-1
+        
+        if phat_pos is None:
+            phat_pos = np.zeros_like(self.x)
+
+        # starting with + and staying
+        if self.tau==1:
+            d = self.stay(phat)
+        else:
+            d = (1 - 1/self.tau) * self.stay(phat)
+        if recurse:
+            d = self.apply_transform_cond_external(d, sign, recurse-1,
+                                                   phat_pos=phat_pos)[0]
+        else:  # if we've reached leaves of the recursion tree
+            phat_pos += d
+
+        # probability density flowing in from mirrored config
+        d = 1/self.tau * self.leave(phat)
+        if recurse:
+            d = self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
+                                                   phat_pos=phat_pos)[0]
+        else:  # if we've reached leaves of the recursion tree
+            phat_pos += d[::-1]
+        
+        return phat_pos
 #end Stigmergy
 
 
@@ -704,7 +769,7 @@ class Landscape():
             # parameters suffice
             solver = Stigmergy(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
-                               dx=max(2.5e-4,scale/4000),
+                               dx=max(2.5e-4,scale/1250),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1)
             

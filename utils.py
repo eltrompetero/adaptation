@@ -113,3 +113,69 @@ def memory_cost(t, minpos=0):
 
 def sensing_cost(t):
     return np.log(t * 2 * np.pi * np.exp(1)) / 2 / np.log(2)
+
+def interpolate(beta_range, dkl, h0,
+                errs=None,
+                tol=1e-4,
+                deg=None,
+                include_infty=True,
+                method='chebyshev'):
+    """Interpolate calculated trajectory using known endpoints.
+
+    Only interpolate through points with sufficiently small errors.
+
+    Parameters
+    ----------
+    beta_range : ndarray
+    dkl : ndarray
+    h0 : float
+    errs : ndarray
+    tol : float, 1e-3
+        Error tolerance to use for deciding whether or not to fit points.
+    deg : int, None
+        Degree of polynomial to fit.
+    include_infty : bool, True
+    method : str, 'chebyshev'
+        Can be 'chebyshev' or 'cubic'
+
+    Returns
+    -------
+    function
+        Interpolated function of beta.
+    """
+
+    from scipy.interpolate import interp1d
+    from numpy.polynomial.chebyshev import chebfit, chebval
+    assert (np.diff(beta_range)>0).all()
+    assert beta_range.size==dkl.size
+    if not deg is None:
+        assert deg<=beta_range.size
+    
+    if not errs is None:
+        keepix = (errs<tol).all(1)
+        x = beta_range[keepix]
+        y = dkl[keepix]
+    else:
+        x = beta_range
+        y = dkl
+
+
+    if include_infty and x[-1]!=1:
+        x = np.append(x, 1)
+        y = np.append(y, -np.log(2) - np.log(pplus(h0)) / 2 - np.log(pminus(h0)) / 2)
+
+    if method=='cubic':
+        fit = interp1d(x, y, kind='cubic', fill_value="extrapolate")
+        return fit
+    elif method=='chebyshev': 
+        if deg is None:
+            deg = x.size - 1
+
+        # Chebyshev sometimes seems to extrapolate better but it can show strange
+        # divergence
+        # fitting to log does much better than linear space (probably because of sharp
+        # spike on the right side)
+        fit = chebfit(x*2-1, np.log(y), deg)
+        return lambda x, fit=fit: np.exp(chebval(x*2-1, fit))
+    else:
+        raise NotImplementedError
