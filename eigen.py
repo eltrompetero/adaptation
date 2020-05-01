@@ -318,21 +318,17 @@ class Vision():
             assert recurse>=0
             assert sign==1 or sign==-1
         
-        newphat = np.zeros_like(self.x)
         if phat_pos is None:
             phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
-        if self.tau==1:
-            d = np.zeros_like(self.x)
-        else:
+        if self.tau!=1:
             d = (1 - 1/self.tau) * self.stay(phat)
-        if recurse:
-            d = self.apply_transform_cond_external(d, sign, recurse-1,
-                                                   phat_pos=phat_pos)[0]
-        else:  # if we've reached leaves of the recursion tree
-            phat_pos += d
-        newphat += d
+            if recurse:
+                d = self.apply_transform_cond_external(d, sign, recurse-1,
+                                                       phat_pos=phat_pos)[0]
+            else:  # if we've reached leaves of the recursion tree
+                phat_pos += d
 
         # probability density flowing in from mirrored config
         d = 1/self.tau * self.leave(phat)
@@ -341,9 +337,8 @@ class Vision():
                                                    phat_pos=phat_pos)[0]
         else:  # if we've reached leaves of the recursion tree
             phat_pos += d[::-1]
-        newphat += d[::-1]  # must be inverted by self.leave() is defined rel to h=h0
         
-        return newphat, phat_pos
+        return phat_pos
 
     def solve_external_cond(self,
                             mn_recursion_depth=1,
@@ -396,7 +391,7 @@ class Vision():
         if phat0 is None:
             for i in range(no_of_one_degree_steps):
                 newphat /= newphat.dot(self.M)
-                phatpos = self.apply_transform_cond_external(newphat, 1, 0)[1]
+                phatpos = self.apply_transform_cond_external(newphat, 1, 0)
                 newphat = phatpos
         # or use given starting approximation
         else:
@@ -474,7 +469,7 @@ class Vision():
         oldphat = newphat = phatToCheck.copy()
         while counter<=tmax and err>tol:
             newphat /= newphat.dot(self.M)
-            newphat = self.apply_transform_cond_external(newphat, 1, recursion_depth)[1]
+            newphat = self.apply_transform_cond_external(newphat, 1, recursion_depth)
 
             err = np.sqrt( ((newphat-oldphat)**2).dot(self.M) )
             oldphat = newphat
