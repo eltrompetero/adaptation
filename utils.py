@@ -119,7 +119,8 @@ def interpolate(beta_range, dkl, h0,
                 tol=1e-4,
                 deg=None,
                 include_infty=True,
-                method='chebyshev'):
+                method='chebyshev',
+                return_coeffs=False):
     """Interpolate calculated trajectory using known endpoints.
 
     Only interpolate through points with sufficiently small errors.
@@ -137,11 +138,13 @@ def interpolate(beta_range, dkl, h0,
     include_infty : bool, True
     method : str, 'chebyshev'
         Can be 'chebyshev' or 'cubic'
+    return_coeffs : bool, False
 
     Returns
     -------
     function
         Interpolated function of beta.
+    ndarray (optional)
     """
 
     from scipy.interpolate import interp1d
@@ -176,6 +179,31 @@ def interpolate(beta_range, dkl, h0,
         # fitting to log does much better than linear space (probably because of sharp
         # spike on the right side)
         fit = chebfit(x*2-1, np.log(y), deg)
+        if return_coeffs:
+            return lambda x, fit=fit: np.exp(chebval(x*2-1, fit)), fit
         return lambda x, fit=fit: np.exp(chebval(x*2-1, fit))
     else:
         raise NotImplementedError
+
+def find_chebmin(*args, **kwargs):
+    """Same as interpolate().
+
+    Returns
+    -------
+    float
+    """
+    
+    from numpy.polynomial.chebyshev import chebder, chebroots
+
+    kwargs['return_coeffs'] = True
+    spline, coeffs = interpolate(*args, **kwargs)
+    dcoeffs = chebder(coeffs)
+    roots = (chebroots(dcoeffs) + 1) / 2
+
+    # only consider real roots within beta in [0,1]
+    roots = roots[roots.imag<1e-10]
+    roots = roots.real
+    roots = roots[(roots>=0)&(roots<=1)]
+    
+    mnix = np.argmin(spline(roots))
+    return roots[mnix], spline(roots[mnix])
