@@ -72,7 +72,7 @@ class Vision():
         self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
         
         # basic precision checks (for one's sanity)
-        assert np.isclose(self.eps_gaussian(x).dot(self.M), 1)
+        assert np.isclose(self.eps_gaussian(x).dot(self.M), 1), (h0, nBatch, L, dx)
         assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
 
         self._init_addon(**kwargs)
@@ -525,8 +525,6 @@ class Vision():
         # dkl as a function of x to be average by density later
         dkl = (pplus(self.x) * ( np.log(pplus(self.x)) - np.log(pplus(self.h0)) ) +
                pminus(self.x) * ( np.log(pminus(self.x)) - np.log(pminus(self.h0)) ))
-        #dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
-        #       pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
 
         def loop_wrapper(args):
             i, beta, recurse = args
@@ -566,7 +564,7 @@ class Vision():
             
             # properly weighted average of DKL
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
-
+        
         return solvedDkl, np.vstack(errs)
 
     @classmethod
@@ -714,6 +712,97 @@ class Stigmergy(Vision):
             phat_pos += d[::-1]
         
         return phat_pos
+
+    def stability_cost(self, phatpos):
+        """Calculate averaged stability cost.
+
+        Returns
+        -------
+        float
+        """
+
+        r = binary_env_stay_rate(self.x-self.h0, self.tau, self.v, self.weight)
+        d = (1-r) * np.log((1-r) * self.tau) + r * np.log(r / (1-1/self.tau))
+
+        return (d * phatpos).dot(self.M)
+
+    def dkl(self, beta_range,
+            recurse=None,
+            n_cpus=None,
+            **kwargs):
+        """Calculate Kullback-Leibler divergence across a range of beta.
+
+        Parameters
+        ----------
+        beta_range : ndarray
+        recurse : list or int
+            If list, specifies recursion depth to use for each beta specified. As a good
+            rule of thumb, this should be several times the time scale implied by beta.
+        n_cpus : int, None
+        **kwargs
+
+        Returns
+        -------
+        ndarray
+            Array of averaged Kullback-Leibler divergence.
+        ndarray
+            Array of errors for each point. First col is iteration error, second col is
+            recursion error.
+        ndarray
+        """
+        
+        if not hasattr(recurse, '__len__'):
+            recurse = [recurse]*beta_range.size
+        n_cpus = n_cpus or (mp.cpu_count()-1)
+        solvedDkl = np.zeros_like(beta_range)
+        # dkl as a function of x to be average by density later
+        dkl = (pplus(self.x) * ( np.log(pplus(self.x)) - np.log(pplus(self.h0)) ) +
+               pminus(self.x) * ( np.log(pminus(self.x)) - np.log(pminus(self.h0)) ))
+
+        def loop_wrapper(args):
+            i, beta, recurse = args
+            
+            if beta in self.cache_phatpos.keys():
+                return self.cache_phatpos[beta]
+            
+            if 'v' in self.__dict__.keys():
+                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                        dx=self.dx, L=self.L, v=self.v, weight=self.weight)
+            else:
+                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                        dx=self.dx, L=self.L)
+            phatpos, errflag, errs, depth = solver.solve_external_cond(**kwargs)
+            if errs[0]>1:
+                print("Large iteration error %f for beta = %f."%(errs[0],beta))
+            if errs[1]>1:
+                print("Large recursion error %f for beta = %f."%(errs[1],beta))
+
+            scost = self.stability_cost(phatpos)
+            return phatpos, errs, scost
+        
+        args = zip(range(beta_range.size), beta_range, recurse)
+        if n_cpus>1:
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool(n_cpus) as pool:
+                    phatpos, errs, scost = list(zip(*pool.map(loop_wrapper, args)))
+        else:
+            phatpos = []
+            errs = []
+            scost = []
+            for arg in args:
+                output = loop_wrapper(arg)
+                phatpos.append(output[0])
+                errs.append(output[1])
+                scost.append(output[2])
+
+        for i, beta in enumerate(beta_range):
+            if not beta in self.cache_phatpos.keys():
+                self.cache_phatpos[beta] = phatpos[i]
+            
+            # properly weighted average of DKL
+            solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
+        
+        return solvedDkl, np.vstack(errs), np.array(scost)
 #end Stigmergy
 
 
@@ -747,6 +836,10 @@ class Landscape():
         have to wait for long recursions to finish before starting on a new instance of
         Stigmergy.
 
+        Parameters
+        ----------
+        n_cpus : int, None
+
         Returns
         -------
         dict
@@ -756,7 +849,7 @@ class Landscape():
         """
 
         from itertools import product
-        nCpus = n_cpus or mp.cpu_count()-1
+        nCpus = mp.cpu_count()-1 if n_cpus is None else n_cpus
 
         tau = self.envProp['tau']
         weight = self.agentProp['weight']
@@ -771,23 +864,24 @@ class Landscape():
                                L=max(.5,scale*2),
                                dx=max(2.5e-4,scale/1250),
                                weight=weight, v=v)
-            return solver.dkl(np.array([beta]), n_cpus=1)
-            
+            return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
         with threadpool_limits(limits=1, user_api='blas'):
             with mp.Pool(nCpus) as pool:
                 args = product(self.scaleRange, self.nBatchRange, self.betaRange)
-                dkl_, errs_ = list(zip(*pool.map(loop_wrapper, args)))
+                dkl_, errs_, scost_ = list(zip(*pool.map(loop_wrapper, args)))
 
         # group by landscape axes
         n = self.betaRange.size
         dkl_ = [np.concatenate(dkl_[i*n:(i+1)*n]) for i in range(len(dkl_)//n)]
         errs_ = [np.vstack(errs_[i*n:(i+1)*n]) for i in range(len(errs_)//n)]
+        scost_ = [np.concatenate(scost_[i*n:(i+1)*n]) for i in range(len(scost_)//n)]
 
-        errs, dkl = {}, {}
+        errs, dkl, scost = {}, {}, {}
         for i, (scale, nbatch) in enumerate(product(self.scaleRange, self.nBatchRange)):
             dkl[(scale, nbatch)] = dkl_[i]
             errs[(scale, nbatch)] = errs_[i]
+            scost[(scale, nbatch)] = scost_[i]
         
-        return dkl, errs
+        return dkl, errs, scost
 #end Landscape
