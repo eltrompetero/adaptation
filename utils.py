@@ -155,7 +155,7 @@ def interpolate(beta_range, dkl, h0,
         assert deg<=beta_range.size
     
     if not errs is None:
-        keepix = (errs<tol).all(1)
+        keepix = errs<tol
         x = beta_range[keepix]
         y = dkl[keepix]
     else:

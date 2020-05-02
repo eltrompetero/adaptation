@@ -228,64 +228,8 @@ class Vision():
         self.cache_phat[self.beta] = phat.copy()
         return phat, errflag
 
-    def iter_cond_tree(self,
-                       phat,
-                       recurse=False):
-        """
-        Parameters
-        ----------
-        recurse : int, False
-
-        Returns
-        -------
-        ndarray
-        ndarray
-        """
-
-        assert recurse>=0
-        
-        leaves = [phat]
-        sign = [1]
-
-        for i in range(recurse+1):
-            newleaves = []
-            newsign = []
-            for s, leaf in zip(sign, leaves):
-                # starting with + and staying
-                newleaves.append( (1 - 1/self.tau) * self.stay(leaf) )
-                newsign.append(s)
-
-                # starting with + and switching to -
-                newleaves.append( 1/self.tau * self.leave(leaf[::-1]) )
-                newsign.append(-s)
-
-            leaves = newleaves
-            sign = newsign
-        
-        phat_pos = np.zeros_like(self.x)
-        phat_neg = np.zeros_like(self.x)
-        parity = 0
-        for s, leaf in zip(sign, leaves):
-            if parity==0:
-                if s==1:
-                    phat_pos += leaf
-                else:
-                    phat_neg += leaf
-            else:
-                if s==-1:
-                    phat_pos += leaf[::-1]
-                else:
-                    phat_neg += leaf[::-1]
-            parity = (parity+1)%2
-
-        return phat_pos, phat_neg
-
     def apply_transform_cond_external(self,
-                                      phat,
-                                      sign,
-                                      recurse=False,
-                                      phat_pos=None,
-                                      run_checks=False):
+                                      phat):
         """Imagine starting a system with equal probability on h0 and -h0. Then, one
         iteration of transformation will maintain probability density with weight
         (1-1/tau) conditional on starting at h0.  At the same time, probability with
@@ -300,13 +244,7 @@ class Vision():
 
         Parameters
         ----------
-        phat_pos : ndarray
-        sign : int, +/-1
-            Sign indicates if we're starting from  (+) or - (-). This is necessary to
-            determine which newphat we add the contribution to since exploit the symmetry
-            of this function to call this exact same function for the negative operation.
-        recurse : int, False
-        run_checks : bool, False
+        phat : ndarray
 
         Returns
         -------
@@ -314,59 +252,38 @@ class Vision():
         ndarray
         """
         
-        if run_checks:
-            assert recurse>=0
-            assert sign==1 or sign==-1
-        
-        if phat_pos is None:
-            phat_pos = np.zeros_like(self.x)
+        phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
-        if self.tau!=1:
+        if self.tau>1:
             d = (1 - 1/self.tau) * self.stay(phat)
-            if recurse:
-                d = self.apply_transform_cond_external(d, sign, recurse-1,
-                                                       phat_pos=phat_pos)[0]
-            else:  # if we've reached leaves of the recursion tree
-                phat_pos += d
+            phat_pos += d
 
         # probability density flowing in from mirrored config
         d = 1/self.tau * self.leave(phat)
-        if recurse:
-            d = self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
-                                                   phat_pos=phat_pos)[0]
-        else:  # if we've reached leaves of the recursion tree
-            phat_pos += d[::-1]
+        phat_pos += d[::-1]
         
         return phat_pos
 
     def solve_external_cond(self,
-                            mn_recursion_depth=1,
-                            mx_recursion_depth=7,
-                            no_of_one_degree_steps=3,
                             tol=1e-5,
-                            convergence_tol=1e6,
-                            tmax=15,
                             phat0=None,
                             iprint=True,
                             cache=True,
-                            recursion_check=True):
+                            recursion_check=True,
+                            **kwargs):
         """For a given recursion depth, find the solution that satisfies the given tolerance
         or before max steps is reached.
+
+        Wrapper for _solve_external_cond().
         
         Parameters
         ----------
-        mn_recursion_depth : int, 1
-        mx_recursion_depth : int, 6
-        no_of_one_degree_steps : int, 3
-            Number of first order approximations to run to get an approximate starting form.
-        tol : float, 1e-5
-        convergence_tol : float, 1e6
-            Early termination criterion in case it is clear convergence is unlikely.
-        tmax : int, 20
+        tmax : int, 200
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
+        tmax : int, 500
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -391,35 +308,29 @@ class Vision():
         newphat /= newphat.dot(self.M)
 
         # first get approximate first order solution
-        if phat0 is None:
-            for i in range(no_of_one_degree_steps):
-                newphat /= newphat.dot(self.M)
-                phatpos = self.apply_transform_cond_external(newphat, 1, 0)
-                newphat = phatpos
-        # or use given starting approximation
-        else:
-            assert phat0.size==self.x.size
+        if not phat0 is None:
             newphat = phat0
 
-        depth = mn_recursion_depth
         errs = (0, tol+1)
-        while depth<mx_recursion_depth and convergence_tol>errs[1]>tol:
-            newphat, errflag, errs, steps = self._solve_external_cond(newphat, depth)
-            depth += 1
+        newphat, errflag, errs, steps = self._solve_external_cond(newphat, 1,
+                                                                  tol=tol,
+                                                                  recursion_check=False,
+                                                                  **kwargs)
 
         if iprint:
-            print("Done in %d steps to depth %d."%(steps,depth))
+            print("Done in %d steps."%steps)
         
         if cache:
             self.cache_phatpos[self.beta] = newphat.copy()
 
-        return  newphat, errflag, errs, depth
+        return  newphat, errflag, errs
 
     def _solve_external_cond(self,
                              phat0,
                              recursion_depth,
                              tol=1e-5,
-                             tmax=20,
+                             mx_tol=1e6,
+                             tmax=1000,
                              cache=True,
                              recursion_check=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
@@ -431,7 +342,8 @@ class Vision():
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         recursion_depth : int
         tol : float, 1e-5
-        tmax : int, 20
+        mx_tol : float, 1e6
+        tmax : int, 1000
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -456,27 +368,16 @@ class Vision():
         newphat = phat0
         err = tol * 10
 
-        # solve on recursion_depth-1 to check for error
-        if recursion_check and recursion_depth>1:
-            phatToCheck = self._solve_external_cond(newphat,
-                                                    recursion_depth-1,
-                                                    tol=tol,
-                                                    tmax=tmax,
-                                                    cache=False,
-                                                    recursion_check=False)[0]
-        else:
-            phatToCheck = newphat
-        
-        # use recursion_depth-1 as starting point
         counter = 0
-        oldphat = newphat = phatToCheck.copy()
-        while counter<=tmax and err>tol:
+        oldphat = newphat
+        while counter<=tmax and mx_tol>err>tol:
             newphat /= newphat.dot(self.M)
-            newphat = self.apply_transform_cond_external(newphat, 1, recursion_depth)
+            newphat = self.apply_transform_cond_external(newphat)
 
             err = np.sqrt( ((newphat-oldphat)**2).dot(self.M) )
             oldphat = newphat
             counter += 1
+        counter -= 1
 
         # set error flag
         if counter>=tmax and err>tol:
@@ -489,9 +390,6 @@ class Vision():
         if cache:
             self.cache_phatpos[self.beta] = newphat.copy()
 
-        if recursion_check:
-            recursionErr = np.sqrt( ((newphat - phatToCheck)**2).dot(self.M) )
-            return  newphat, errflag, (err, recursionErr), counter 
         return  newphat, errflag, (err,), counter
     
     def dkl(self, beta_range,
@@ -538,11 +436,9 @@ class Vision():
             else:
                 solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                         dx=self.dx, L=self.L)
-            phatpos, errflag, errs, depth = solver.solve_external_cond(**kwargs)
+            phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
-            if errs[1]>1:
-                print("Large recursion error %f for beta = %f."%(errs[1],beta))
             return phatpos, errs
         
         args = zip(range(beta_range.size), beta_range, recurse)
@@ -644,19 +540,14 @@ class Stigmergy(Vision):
             stayprob = binary_env_stay_rate(dh, self.tau, -v, -weight)
             
         # term will be multiplied by 1-1/tau
-        if self.tau==1:
+        if self.tau<=1:  # for dissipators tau<1 means the environment changes for sure
             self.staycoeff *= stayprob
         else:
             self.staycoeff *= stayprob / (1 - 1/self.tau)
         # term will be multiplied by 1/tau
         self.leavecoeff *= (1 - stayprob) * self.tau
 
-    def apply_transform_cond_external(self,
-                                      phat,
-                                      sign,
-                                      recurse=False,
-                                      phat_pos=None,
-                                      run_checks=False):
+    def apply_transform_cond_external(self, phat):
         """Imagine starting a system with equal probability on h0 and -h0. Then, one
         iteration of transformation will maintain probability density with weight
         (1-1/tau) conditional on starting at h0.  At the same time, probability with
@@ -671,13 +562,7 @@ class Stigmergy(Vision):
 
         Parameters
         ----------
-        phat_pos : ndarray
-        sign : int, +/-1
-            Sign indicates if we're starting from  (+) or - (-). This is necessary to
-            determine which newphat we add the contribution to since exploit the symmetry
-            of this function to call this exact same function for the negative operation.
-        recurse : int, False
-        run_checks : bool, False
+        phat : ndarray
 
         Returns
         -------
@@ -685,31 +570,18 @@ class Stigmergy(Vision):
         ndarray
         """
         
-        if run_checks:
-            assert recurse>=0
-            assert sign==1 or sign==-1
-        
-        if phat_pos is None:
-            phat_pos = np.zeros_like(self.x)
+        phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
         if self.tau==1:
             d = self.stay(phat)
         else:
             d = (1 - 1/self.tau) * self.stay(phat)
-        if recurse:
-            d = self.apply_transform_cond_external(d, sign, recurse-1,
-                                                   phat_pos=phat_pos)[0]
-        else:  # if we've reached leaves of the recursion tree
-            phat_pos += d
+        phat_pos += d
 
         # probability density flowing in from mirrored config
         d = 1/self.tau * self.leave(phat)
-        if recurse:
-            d = self.apply_transform_cond_external(d[::-1], -sign, recurse-1,
-                                                   phat_pos=phat_pos)[0]
-        else:  # if we've reached leaves of the recursion tree
-            phat_pos += d[::-1]
+        phat_pos += d[::-1]
         
         return phat_pos
 
@@ -720,8 +592,11 @@ class Stigmergy(Vision):
         -------
         float
         """
-
-        r = binary_env_stay_rate(self.x-self.h0, self.tau, self.v, self.weight)
+        
+        if self.v<0:
+            r = binary_env_stay_rate(self.x-self.h0, self.tau, -self.v, -self.weight)
+        else:
+            r = binary_env_stay_rate(self.x-self.h0, self.tau, self.v, self.weight)
         d = (1-r) * np.log((1-r) * self.tau) + r * np.log(r / (1-1/self.tau))
 
         return (d * phatpos).dot(self.M)
@@ -771,11 +646,9 @@ class Stigmergy(Vision):
             else:
                 solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                         dx=self.dx, L=self.L)
-            phatpos, errflag, errs, depth = solver.solve_external_cond(**kwargs)
+            phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
-            if errs[1]>1:
-                print("Large recursion error %f for beta = %f."%(errs[1],beta))
 
             scost = self.stability_cost(phatpos)
             return phatpos, errs, scost
