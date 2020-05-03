@@ -7,3 +7,4 @@ from .utils import *
 from . import eigen
 from . import agent
 from . import pipeline as pipe
+from . import plot

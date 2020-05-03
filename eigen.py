@@ -36,7 +36,7 @@ class Vision():
         """
         
         # check input args
-        assert tau>0
+        assert tau>=1
         assert 0 <= h0 < L
         assert 0<=beta<=1
         if nBatch<1000:
@@ -534,13 +534,10 @@ class Stigmergy(Vision):
         self.weight = weight
         
         dh = self.h0 - self.x[None,:]
-        if v>=0:
-            stayprob = binary_env_stay_rate(dh, self.tau, v, weight)
-        else:
-            stayprob = binary_env_stay_rate(dh, self.tau, -v, -weight)
+        stayprob = self.binary_env_stay_p(dh)
             
         # term will be multiplied by 1-1/tau
-        if self.tau<=1:  # for dissipators tau<1 means the environment changes for sure
+        if self.tau==1:  # for dissipators tau<1 means the environment changes for sure
             self.staycoeff *= stayprob
         else:
             self.staycoeff *= stayprob / (1 - 1/self.tau)
@@ -593,10 +590,7 @@ class Stigmergy(Vision):
         float
         """
         
-        if self.v<0:
-            r = binary_env_stay_rate(self.x-self.h0, self.tau, -self.v, -self.weight)
-        else:
-            r = binary_env_stay_rate(self.x-self.h0, self.tau, self.v, self.weight)
+        r = self.binary_env_stay_p(self.x-self.h0)
         d = (1-r) * np.log((1-r) * self.tau) + r * np.log(r / (1-1/self.tau))
 
         return (d * phatpos).dot(self.M)
@@ -676,6 +670,33 @@ class Stigmergy(Vision):
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
         
         return solvedDkl, np.vstack(errs), np.array(scost)
+
+    def binary_env_stay_p(self, dh):
+        """Probability at each time step that the environment remains fixed and the
+        probability that it switches. This is for a stabilizer. For a dissipator, one should
+        simply switch the two probabilities.
+        
+        Parameters
+        ----------
+        dh : float
+
+        Returns
+        -------
+        float or ndarray
+            Stay probability. Decay probability is 1 minus this.
+        """
+        
+        if self.v<0:
+            v = -self.v
+            weight = -self.weight
+        else:
+            v = self.v
+            weight = self.weight
+            
+        if type(dh) is np.ndarray:
+            return (1 - 1/self.tau + weight * v / self.tau / (dh*dh + v)).clip(0)
+        else:
+            return max(1 - 1/self.tau + weight * v / self.tau / (dh*dh + v), 0)
 #end Stigmergy
 
 
@@ -756,5 +777,8 @@ class Landscape():
             errs[(scale, nbatch)] = errs_[i]
             scost[(scale, nbatch)] = scost_[i]
         
+        self.dkl = dkl
+        self.errs = errs
+        self.scost = scost
         return dkl, errs, scost
 #end Landscape

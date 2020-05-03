@@ -91,7 +91,7 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
     """
     
     assert v>=0
-
+    
     return 1 - 1/tau + weight * v / tau / (dh*dh + v)
 
 def memory_cost(t, minpos=0):
