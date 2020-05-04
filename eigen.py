@@ -782,3 +782,80 @@ class Landscape():
         self.scost = scost
         return dkl, errs, scost
 #end Landscape
+
+
+
+class AgentLandscape():
+    """Fixed environment with varying agent properties.
+    """
+    def __init__(self, env_prop, agent_prop, beta_range, nbatch_range):
+        """
+        Parameters
+        ----------
+        env_prop : dict
+        agent_prop : dict
+        beta_range : ndarray
+        nbatch_range : ndarray
+        """
+
+        self.betaRange = beta_range
+        self.nBatchRange = nbatch_range
+
+        assert 'tau' in env_prop.keys()
+        assert 'h0' in env_prop.keys()
+        self.envProp = env_prop
+
+        assert 'weight' in agent_prop.keys()
+        assert 'v' in agent_prop.keys()
+        self.agentProp = agent_prop
+
+    def run(self, n_cpus=None):
+        """Put every combination of nbatch and beta on a separate thread. 
+
+        Parameters
+        ----------
+        n_cpus : int, None
+
+        Returns
+        -------
+        dict
+            Arrays of measured unfitness D.
+        dict
+            Arrays of errors from eigen calculation.
+        """
+
+        from itertools import product
+        nCpus = mp.cpu_count()-1 if n_cpus is None else n_cpus
+
+        tau = self.envProp['tau']
+        scale = self.envProp['h0']
+        weight = self.agentProp['weight']
+        v = self.agentProp['v']
+
+        def loop_wrapper(args):
+            nbatch, beta = args
+            # must be careful to maintain small enough spacing for accurate computation
+            # note that we do not go beyond h0=1 for standard sims and following
+            # parameters suffice
+            solver = Stigmergy(tau, scale, 0, nbatch,
+                               L=max(.5,scale*2),
+                               dx=max(2.5e-4,scale/2500),
+                               weight=weight, v=v)
+            return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
+
+        with threadpool_limits(limits=1, user_api='blas'):
+            with mp.Pool(nCpus) as pool:
+                args = product(self.nBatchRange, self.betaRange)
+                dkl_, errs_, scost_ = list(zip(*pool.map(loop_wrapper, args)))
+
+        # group by landscape axes
+        n = self.betaRange.size
+        dkl = np.vstack([np.concatenate(dkl_[i*n:(i+1)*n]) for i in range(len(dkl_)//n)])
+        errs = np.vstack([np.vstack(errs_[i*n:(i+1)*n]).ravel() for i in range(len(errs_)//n)])
+        scost = np.vstack([np.concatenate(scost_[i*n:(i+1)*n]) for i in range(len(scost_)//n)])
+        
+        self.dkl = dkl
+        self.errs = errs
+        self.scost = scost
+        return dkl, errs, scost
+#end AgentLandscape

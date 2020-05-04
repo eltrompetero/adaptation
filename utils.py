@@ -120,8 +120,10 @@ def interpolate(beta_range, dkl, h0,
                 deg=None,
                 include_infty=True,
                 method='chebyshev',
-                return_coeffs=False):
-    """Interpolate calculated trajectory using known endpoints.
+                return_coeffs=False,
+                logy=True):
+    """Interpolate calculated trajectory using known endpoints. Default settings are for
+    unfitness curve.
 
     Only interpolate through points with sufficiently small errors.
 
@@ -139,6 +141,8 @@ def interpolate(beta_range, dkl, h0,
     method : str, 'chebyshev'
         Can be 'chebyshev' or 'cubic'
     return_coeffs : bool, False
+    logy : bool, False
+        If True, fit to the log of y.
 
     Returns
     -------
@@ -165,7 +169,10 @@ def interpolate(beta_range, dkl, h0,
 
     if include_infty and x[-1]!=1:
         x = np.append(x, 1)
-        y = np.append(y, -np.log(2) - np.log(pplus(h0)) / 2 - np.log(pminus(h0)) / 2)
+        if include_infty is True:
+            y = np.append(y, -np.log(2) - np.log(pplus(h0)) / 2 - np.log(pminus(h0)) / 2)
+        else:
+            y = np.append(y, include_infty)
 
     if method=='cubic':
         fit = interp1d(x, y, kind='cubic', fill_value="extrapolate")
@@ -178,12 +185,33 @@ def interpolate(beta_range, dkl, h0,
         # divergence
         # fitting to log does much better than linear space (probably because of sharp
         # spike on the right side)
-        fit = chebfit(x*2-1, np.log(y), deg)
+        if logy:
+            fit = chebfit(x*2-1, np.log(y), deg)
+            if return_coeffs:
+                return lambda x, fit=fit: np.exp(chebval(x*2-1, fit)), fit
+            return lambda x, fit=fit: np.exp(chebval(x*2-1, fit))
+
+        fit = chebfit(x*2-1, y, deg)
         if return_coeffs:
-            return lambda x, fit=fit: np.exp(chebval(x*2-1, fit)), fit
-        return lambda x, fit=fit: np.exp(chebval(x*2-1, fit))
+            return lambda x, fit=fit: chebval(x*2-1, fit), fit
+        return lambda x, fit=fit: chebval(x*2-1, fit)
     else:
         raise NotImplementedError
+
+def interpolate_cost(betaRange, cost, errs, h0, tau,
+                     agent_prop):
+    """Wrapper for calling interpolate on stability cost function.
+    """
+    
+    from .agent import stability_cost
+    assert 'weight' in agent_prop.keys()
+    assert 'v' in agent_prop.keys()
+    info = agent_prop.copy()
+    info['tau'] = tau
+
+    inftyCost = stability_cost(info, h0, 0)
+    return interpolate(betaRange, cost, h0, errs.ravel(),
+                       include_infty=inftyCost, logy=False)
 
 def find_chebmin(*args, **kwargs):
     """Same as interpolate().
