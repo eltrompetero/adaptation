@@ -191,7 +191,7 @@ def interpolate(beta_range, dkl, h0,
     if include_infty and x[-1]!=1:
         x = np.append(x, 1)
         if include_infty is True:
-            y = np.append(y, -np.log(2) - np.log(pplus(h0)) / 2 - np.log(pminus(h0)) / 2)
+            y = np.append(y, np.log(2) - entropy(h0, base=np.exp(1))) 
         else:
             y = np.append(y, include_infty)
 
@@ -232,7 +232,7 @@ def interpolate_cost(betaRange, cost, errs, h0, tau,
 
     inftyCost = stability_cost(info, h0, 0)
     return interpolate(betaRange, cost, h0, errs.ravel(),
-                       include_infty=inftyCost, logy=False)
+                       include_infty=inftyCost, logy=True)
 
 def find_chebmin(*args, **kwargs):
     """Same as interpolate().

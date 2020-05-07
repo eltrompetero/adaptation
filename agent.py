@@ -262,8 +262,8 @@ def jit_learn_vision(seed, T, h, nBatch, beta):
             hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
         
-        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
-        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
+        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
+        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
@@ -672,8 +672,8 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
             hhat[t] = beta * H[t-1] + (1-beta) * np.arctanh(Xmu)
             H[t] = hhat[t]
 
-        term1 = pplus(hhat[t]) * (np.log(pplus(hhat[t])) - np.log(pplus(h[t])))
-        term2 = pminus(hhat[t]) * (np.log(pminus(hhat[t])) - np.log(pminus(h[t])))
+        term1 = pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t])))
+        term2 = pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))
         if not np.isnan(term1):
             dkl[t] += term1
         if not np.isnan(term2):
@@ -767,5 +767,6 @@ def stability_cost(noise, h, hhat):
     assert v>=0
 
     stay = binary_env_stay_rate(h-hhat, tau, v, weight)  # decay prob
-    sCost = (1-stay) * np.log( (1-stay) * tau) + stay * np.log(stay / (1-1/tau))
+    sCost = np.log( 1/(1-stay) / tau) / tau + (1-1/tau) * np.log((1-1/tau) / stay)
+    #sCost = (1-stay) * np.log( (1-stay) * tau) + stay * np.log(stay / (1-1/tau))
     return sCost
