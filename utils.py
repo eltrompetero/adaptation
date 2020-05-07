@@ -112,6 +112,7 @@ def memory_cost(t, minpos=0):
     return memCost
 
 def sensing_cost(t):
+    return np.log(t)
     return np.log(t * 2 * np.pi * np.exp(1)) / 2 / np.log(2)
 
 def interpolate(beta_range, dkl, h0,

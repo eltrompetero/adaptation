@@ -613,11 +613,12 @@ class Stigmergy(Vision):
         Returns
         -------
         ndarray
-            Array of averaged Kullback-Leibler divergence.
+            Time-averaged Kullback-Leibler divergence.
         ndarray
             Array of errors for each point. First col is iteration error, second col is
             recursion error.
         ndarray
+            Time-averaged stability cost.
         """
         
         if not hasattr(recurse, '__len__'):
@@ -839,7 +840,7 @@ class AgentLandscape():
             # parameters suffice
             solver = Stigmergy(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
-                               dx=max(2.5e-4,scale/2500),
+                               dx=max(2e-4,scale/2500),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
