@@ -525,13 +525,26 @@ class Stigmergy(Vision):
     def stability_cost(self, phatpos):
         """Calculate averaged stability cost.
 
+        Parameters
+        ----------
+        phatpos : ndarray
+
         Returns
         -------
-        float
+        ndarray
         """
         
-        r = self.binary_env_stay_p(self.x-self.h0)
-        d = np.log( 1/(1-r) / self.tau) / self.tau + (1-1/self.tau) * np.log((1-1/self.tau) / r)
+        stay = self.binary_env_stay_p(self.x-self.h0)
+        
+        term1 = np.log(1/(1-stay) / self.tau) / self.tau 
+        term2 = (1-1/self.tau) * np.log((1-1/self.tau) / stay)
+        
+        d = np.zeros_like(term1)
+
+        notnanix = ~np.isnan(term1)
+        d[notnanix] += term1[notnanix]
+        notnanix = ~np.isnan(term2)
+        d[notnanix] += term2[notnanix]
 
         return (d * phatpos).dot(self.M)
 

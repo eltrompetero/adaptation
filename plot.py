@@ -10,7 +10,7 @@ import pickle
 
 
 
-def plot_tau_range(agent_type, show_legend=True):
+def tau_range(agent_type, show_legend=True):
     """Show example comparison of unfitness landscape for various tau for eigenvalue formulation and
     agent-based simulation.
 

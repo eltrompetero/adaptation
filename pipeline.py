@@ -3,7 +3,8 @@
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 import numpy as np
-from pyutils.agent import *
+from . import agent, eigen
+from .utils import *
 from multiprocess import cpu_count
 from workspace.utils import save_pickle
 from itertools import product
@@ -40,7 +41,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Vision(**kwargs)
+            learner = agent.Vision(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -59,7 +60,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Stigmergy(**kwargs)
+            learner = agent.Stigmergy(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -78,7 +79,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Stigmergy(**kwargs)
+            learner = agent.Stigmergy(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -139,7 +140,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Stigmergy(**kwargs)
+            learner = agent.Stigmergy(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -160,7 +161,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Stigmergy(**kwargs)
+            learner = agent.Stigmergy(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -168,3 +169,55 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
         print()
         save_pickle(['learners', 'scaleRange', 'nBatchRange', 'betaRange', 'tau', 'seed', 'T', 'dkl'],
                     'cache/dissipator_agent_landscape.p', True)
+
+def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
+    tauRange = np.logspace(0, 5, 13)  # time scale for flipping external field
+    h0 = .2  # magnitude of external field
+    nBatch = 1_000
+    degfit = 30
+    betaRange = lobatto_beta(degfit)
+    weight = .95
+    
+    if run_passive:
+        solvers = {}
+        edkl = {}
+        errs = {}
+
+        for tau in tauRange:
+            # recursive solution
+            solvers[tau] = eigen.Vision(tau, h0, 0, nBatch, L=.5, dx=2.5e-4)
+            edkl[tau], errs[tau] = solvers[tau].dkl(betaRange)
+            print("Done with tau=%E."%tau)
+            
+        save_pickle(['edkl', 'errs', 'betaRange', 'h0', 'tauRange'],
+                    'cache/eigen_passive_tau_range.p', True)
+    
+    if run_dissipator:
+        v = -.01
+        solvers = {}
+        edkl = {}
+        errs = {}
+        cost = {}
+
+        for tau in tauRange:
+            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
+            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
+            print("Done with tau=%E."%tau)
+            
+        varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
+        save_pickle(varlist, 'cache/eigen_dissipator_tau_range.p', True)
+
+    if run_stabilizer:
+        v = .01
+        solvers = {}
+        edkl = {}
+        errs = {}
+        cost = {}
+
+        for tau in tauRange:
+            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
+            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
+            print("Done with tau=%E."%tau)
+            
+        varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
+        save_pickle(varlist, 'cache/eigen_stabilizer_tau_range.p', True)
