@@ -16,7 +16,7 @@ class Vision():
     """Eigenvalue formulation for binary (h0, -h0) environment state.
     """
     def __init__(self, tau, h0, beta, nBatch,
-                 L=1, dx=1e-3, **kwargs):
+                 L=.5, dx=None, **kwargs):
         """
         Parameters
         ----------
@@ -30,7 +30,7 @@ class Vision():
             Number of samples from which to learn. This determines Gaussian noise profile.
         L : float, 1
             Max positive value of lattice. Domain spans [-L, L].
-        dx : float, 1e-3
+        dx : float, None
             Spacing of points on lattice spreading out from x=0.
         **kwargs
         """
@@ -41,6 +41,8 @@ class Vision():
         assert 0<=beta<=1
         if nBatch<1000:
             warn("If nBatch is too small, Gaussian assumption is broken.")
+        if dx is None:
+            dx = default_x_spacing(beta, h0, nBatch)
         assert dx>=1e-4, "dx is too small for fast computation"
         
         # set up
@@ -299,9 +301,6 @@ class Vision():
         tuple of float
             Eigenvalue solution error (change in functional form after repeated
             iteration).
-            Difference from one step smaller recursion.
-        tuple of ndarrays
-            Separate solutions conditional on postive and neg external field.
         """
  
         newphat = np.ones_like(self.x)
@@ -396,7 +395,8 @@ class Vision():
             recurse=None,
             n_cpus=None,
             **kwargs):
-        """Calculate Kullback-Leibler divergence across a range of beta.
+        """Calculate Kullback-Leibler divergence across a range of beta. Automatically
+        adjusts resolution along domain to best calculate DKL landscape.
 
         Parameters
         ----------
@@ -420,9 +420,6 @@ class Vision():
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
         solvedDkl = np.zeros_like(beta_range)
-        # dkl as a function of x to be average by density later
-        dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(self.x)) ) +
-               pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(self.x)) ))
 
         def loop_wrapper(args):
             i, beta, recurse = args
@@ -432,34 +429,45 @@ class Vision():
             
             if 'v' in self.__dict__.keys():
                 solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        dx=self.dx, L=self.L, v=self.v, weight=self.weight)
+                                        L=self.L, v=self.v, weight=self.weight)
             else:
                 solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        dx=self.dx, L=self.L)
+                                        L=self.L)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
+            x = solver.x
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
-            return phatpos, errs
+            return phatpos, errs, x
         
         args = zip(range(beta_range.size), beta_range, recurse)
         if n_cpus>1:
             with threadpool_limits(limits=1, user_api='blas'):
                 with mp.Pool(n_cpus) as pool:
-                    phatpos, errs = list(zip(*pool.map(loop_wrapper, args)))
+                    phatpos, errs, x = list(zip(*pool.map(loop_wrapper, args)))
         else:
             phatpos = []
             errs = []
+            x = []
             for arg in args:
                 output = loop_wrapper(arg)
                 phatpos.append(output[0])
                 errs.append(output[1])
-
+                x.append(output[2])
+        
+        # use outputs to calculate typical unfitness
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatpos.keys():
                 self.cache_phatpos[beta] = phatpos[i]
             
             # properly weighted average of DKL
-            solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
+            # dkl as a function of x
+            dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(x[i])) ) +
+                   pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(x[i])) ))
+            M = np.ones(x[i].size) * default_x_spacing(beta, self.h0, self.nBatch)
+            M[0] /= 2
+            M[-1] /= 2
+
+            solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
         
         return solvedDkl, np.vstack(errs)
 #end Vision
