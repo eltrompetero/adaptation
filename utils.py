@@ -99,8 +99,14 @@ def memory_cost(t, minpos=0):
     Parameters
     ----------
     t : ndarray
+        Memory timescale.
     minpos: float, True
         Set min offset so all values are above specified value.
+
+    Returns
+    -------
+    np.ndarray
+        In units of bits.
     """
 
     memCost = -(1/t) * np.log2(1/t) - (1-1/t) * np.log2(1-1/t)
@@ -111,9 +117,23 @@ def memory_cost(t, minpos=0):
 
     return memCost
 
-def sensing_cost(t):
-    return np.log(t)
-    return np.log(t * 2 * np.pi * np.exp(1)) / 2 / np.log(2)
+def sensing_cost(t, h):
+    """
+    Parameters
+    ----------
+    t : ndarray
+        Sensory cell timescale.
+    h : float
+        Field.
+    
+    Returns
+    -------
+    ndarray
+        Cost in bits.
+    """
+
+    cost = -np.log(8 * np.pi * pplus(h) * pminus(h) / t) / 2 + 2 * np.log(1/np.cosh(h))
+    return cost / np.log(2)
 
 def interpolate(beta_range, dkl, h0,
                 errs=None,
