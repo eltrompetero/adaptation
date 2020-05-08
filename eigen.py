@@ -419,7 +419,6 @@ class Vision():
         if not hasattr(recurse, '__len__'):
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
-        solvedDkl = np.zeros_like(beta_range)
 
         def loop_wrapper(args):
             i, beta, recurse = args
@@ -427,12 +426,8 @@ class Vision():
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
-            if 'v' in self.__dict__.keys():
-                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        L=self.L, v=self.v, weight=self.weight)
-            else:
-                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        L=self.L)
+            solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                    L=self.L)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             x = solver.x
             if errs[0]>1:
@@ -454,6 +449,11 @@ class Vision():
                 errs.append(output[1])
                 x.append(output[2])
         
+        return self._dkl_end(beta_range, phatpos, x), np.vstack(errs)
+
+    def _dkl_end(self, beta_range, phatpos, x):
+        solvedDkl = np.zeros_like(beta_range)
+        
         # use outputs to calculate typical unfitness
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatpos.keys():
@@ -468,8 +468,7 @@ class Vision():
             M[-1] /= 2
 
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
-        
-        return solvedDkl, np.vstack(errs)
+        return solvedDkl 
 #end Vision
 
 
@@ -596,42 +595,33 @@ class Stigmergy(Vision):
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
-            if 'v' in self.__dict__.keys():
-                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        dx=self.dx, L=self.L, v=self.v, weight=self.weight)
-            else:
-                solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                        dx=self.dx, L=self.L)
+            solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
+                                    L=self.L, v=self.v, weight=self.weight)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
 
-            scost = self.stability_cost(phatpos)
-            return phatpos, errs, scost
+            scost = solver.stability_cost(phatpos)
+            return phatpos, errs, scost, solver.x
         
         args = zip(range(beta_range.size), beta_range, recurse)
         if n_cpus>1:
             with threadpool_limits(limits=1, user_api='blas'):
                 with mp.Pool(n_cpus) as pool:
-                    phatpos, errs, scost = list(zip(*pool.map(loop_wrapper, args)))
+                    phatpos, errs, scost, x = list(zip(*pool.map(loop_wrapper, args)))
         else:
             phatpos = []
             errs = []
             scost = []
+            x = []
             for arg in args:
                 output = loop_wrapper(arg)
                 phatpos.append(output[0])
                 errs.append(output[1])
                 scost.append(output[2])
+                x.append(output[3])
 
-        for i, beta in enumerate(beta_range):
-            if not beta in self.cache_phatpos.keys():
-                self.cache_phatpos[beta] = phatpos[i]
-            
-            # properly weighted average of DKL
-            solvedDkl[i] = ( dkl * phatpos[i] ).dot(self.M)
-        
-        return solvedDkl, np.vstack(errs), np.array(scost)
+        return self._dkl_end(beta_range, phatpos, x), np.vstack(errs), np.array(scost)
 
     def binary_env_stay_p(self, dh):
         """Probability at each time step that the environment remains fixed and the
