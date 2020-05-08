@@ -463,7 +463,7 @@ class Vision():
             # dkl as a function of x
             dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(x[i])) ) +
                    pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(x[i])) ))
-            M = np.ones(x[i].size) * default_x_spacing(beta, self.h0, self.nBatch)
+            M = np.ones(x[i].size) * (x[i][1]-x[i][0])
             M[0] /= 2
             M[-1] /= 2
 
@@ -595,8 +595,11 @@ class Stigmergy(Vision):
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
+            dx = default_x_spacing(beta, self.h0, self.nBatch)
+            if self.v>0:  # higher density of points for stabilizers
+                dx /= 1.25
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                    L=self.L, v=self.v, weight=self.weight)
+                                    dx=dx, L=self.L, v=self.v, weight=self.weight)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             if errs[0]>1:
                 print("Large iteration error %f for beta = %f."%(errs[0],beta))
@@ -708,7 +711,6 @@ class Landscape():
             # parameters suffice
             solver = Stigmergy(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
-                               dx=max(2.5e-4,scale/1250),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
@@ -791,7 +793,6 @@ class AgentLandscape():
             # parameters suffice
             solver = Stigmergy(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
-                               dx=max(2e-4,scale/2500),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
