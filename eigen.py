@@ -338,7 +338,7 @@ class Vision():
         recursion_depth : int
         tol : float, 1e-5
         mx_tol : float, 1e6
-        tmax : int, 1500
+        tmax : int,51500
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -464,6 +464,7 @@ class Vision():
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
         return solvedDkl 
 #end Vision
+Passive = Vision  # alias
 
 
 
