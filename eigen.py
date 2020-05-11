@@ -271,7 +271,6 @@ class Vision():
                             tol=1e-5,
                             phat0=None,
                             iprint=True,
-                            cache=True,
                             recursion_check=True,
                             **kwargs):
         """For a given recursion depth, find the solution that satisfies the given tolerance
@@ -319,9 +318,6 @@ class Vision():
         if iprint:
             print("Done in %d steps."%steps)
         
-        if cache:
-            self.cache_phatpos[self.beta] = newphat.copy()
-
         return  newphat, errflag, errs
 
     def _solve_external_cond(self,
@@ -329,7 +325,7 @@ class Vision():
                              recursion_depth,
                              tol=1e-5,
                              mx_tol=1e6,
-                             tmax=1000,
+                             tmax=1500,
                              cache=True,
                              recursion_check=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
@@ -342,7 +338,7 @@ class Vision():
         recursion_depth : int
         tol : float, 1e-5
         mx_tol : float, 1e6
-        tmax : int, 1000
+        tmax : int, 1500
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -386,9 +382,6 @@ class Vision():
         if err>tol:
             errflag = 2
         
-        if cache:
-            self.cache_phatpos[self.beta] = newphat.copy()
-
         return  newphat, errflag, (err,), counter
     
     def dkl(self, beta_range,
@@ -426,8 +419,9 @@ class Vision():
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
+            dx = default_x_spacing(beta, self.h0, self.nBatch)
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
-                                    L=self.L)
+                                    dx=dx, L=self.L)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             x = solver.x
             if errs[0]>1:
@@ -457,7 +451,7 @@ class Vision():
         # use outputs to calculate typical unfitness
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatpos.keys():
-                self.cache_phatpos[beta] = phatpos[i]
+                self.cache_phatpos[beta] = x[i], phatpos[i]
             
             # properly weighted average of DKL
             # dkl as a function of x
@@ -593,11 +587,11 @@ class Stigmergy(Vision):
             i, beta, recurse = args
             
             if beta in self.cache_phatpos.keys():
-                return self.cache_phatpos[beta]
+                return self.cache_phatpos[beta][1]
             
             dx = default_x_spacing(beta, self.h0, self.nBatch)
             if self.v>0:  # higher density of points for stabilizers
-                dx /= 1.25
+                dx /= 1.5
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                     dx=dx, L=self.L, v=self.v, weight=self.weight)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
@@ -629,7 +623,7 @@ class Stigmergy(Vision):
     def binary_env_stay_p(self, dh):
         """Probability at each time step that the environment remains fixed and the
         probability that it switches. This is for a stabilizer. For a dissipator, one should
-        simply switch the two probabilities.
+        simply switch the two probabilities as is done in this function.
         
         Parameters
         ----------
