@@ -108,8 +108,9 @@ def memory_cost(t, minpos=0):
     np.ndarray
         In units of bits.
     """
-
-    memCost = -(1/t) * np.log2(1/t) - (1-1/t) * np.log2(1-1/t)
+    
+    b = np.exp(-1/t)
+    memCost = -b * np.log2(b) - (1-b) * np.log2(1-b)
     memCost[np.isnan(memCost)] = 0
     
     # fixed offset

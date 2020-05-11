@@ -43,7 +43,6 @@ class Vision():
             warn("If nBatch is too small, Gaussian assumption is broken.")
         if dx is None:
             dx = default_x_spacing(beta, h0, nBatch)
-        assert dx>=1e-4, "dx is too small for fast computation"
         
         # set up
         self.tau = tau
@@ -58,6 +57,8 @@ class Vision():
         self.cache_phatpos = {}  # cache for different beta
         self.cache_phatneg = {}
         self.cache_phat = {}
+        if self.x.size>1e5:
+            raise Exception("x vector is too large.")
         
         s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
         self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
@@ -325,7 +326,7 @@ class Vision():
                              recursion_depth,
                              tol=1e-5,
                              mx_tol=1e6,
-                             tmax=1500,
+                             tmax=1000,
                              cache=True,
                              recursion_check=True):
         """For a given recursion depth, find the solution that satisfies the given tolerance
@@ -338,7 +339,7 @@ class Vision():
         recursion_depth : int
         tol : float, 1e-5
         mx_tol : float, 1e6
-        tmax : int,51500
+        tmax : int, 1000
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -463,8 +464,8 @@ class Vision():
 
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
         return solvedDkl 
-#end Vision
 Passive = Vision  # alias
+#end Vision
 
 
 
