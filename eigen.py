@@ -75,7 +75,7 @@ class Vision():
         self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
         
         # basic precision checks (for one's sanity)
-        assert np.isclose(self.eps_gaussian(x).dot(self.M), 1), (h0, nBatch, L, dx)
+        assert np.isclose(self.eps_gaussian(x).dot(self.M), 1), (h0, beta, nBatch, L, dx)
         assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
 
         self._init_addon(**kwargs)
@@ -788,7 +788,7 @@ class AgentLandscape():
             # note that we do not go beyond h0=1 for standard sims and following
             # parameters suffice
             solver = Stigmergy(tau, scale, 0, nbatch,
-                               L=max(.5,scale*2),
+                               L=max(.5,scale*2.5),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 

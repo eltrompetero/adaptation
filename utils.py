@@ -272,5 +272,8 @@ def default_x_spacing(beta, h0, nBatch):
     -------
     float
     """
+    
+    if beta==0:
+        return default_x_spacing(1e-10, h0, nBatch)
     dx = np.sqrt(pplus(h0) * pminus(h0) / nBatch / (-1/np.log(beta))) / 4
-    return min(dx, 2.5e-3)
+    return dx
