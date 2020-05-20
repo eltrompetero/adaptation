@@ -174,7 +174,7 @@ def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
     tauRange = np.logspace(0, 5, 13)  # time scale for flipping external field
     h0 = .2  # magnitude of external field
     nBatch = 1_000
-    degfit = 30
+    degfit = 40
     betaRange = lobatto_beta(degfit)
     weight = .95
     

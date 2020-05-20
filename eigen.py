@@ -593,7 +593,7 @@ class Stigmergy(Vision):
             
             dx = default_x_spacing(beta, self.h0, self.nBatch)
             if self.v>0:  # higher density of points for stabilizers
-                dx /= 1.5
+                dx /= 1.25
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                     dx=dx, L=self.L, v=self.v, weight=self.weight)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
