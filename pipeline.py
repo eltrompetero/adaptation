@@ -14,8 +14,8 @@ SEED = 1  # fixed seed for generating trajectories, reduces variance, increases 
 
 
 def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
-    """Agent unfitness landscape for various environments. From "agents in binary
-    environment.ipynb".
+    """Agent unfitness landscape for environments changing with timescale. From "agents in
+    binary environment.ipynb", using ABS.
 
     Parameters
     ----------
@@ -171,6 +171,16 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
                     'cache/dissipator_agent_landscape.p', True)
 
 def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
+    """Agent unfitness as a function of environmental timescale using eigenfunction solution
+    method.
+
+    Parameters
+    ----------
+    run_passive : bool, True
+    run_dissipator : bool, True
+    run_stabilizer : bool, True
+    """
+
     tauRange = np.logspace(0, 5, 13)  # time scale for flipping external field
     h0 = .2  # magnitude of external field
     nBatch = 1_000

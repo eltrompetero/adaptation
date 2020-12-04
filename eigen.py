@@ -274,8 +274,10 @@ class Vision():
                             iprint=True,
                             recursion_check=True,
                             **kwargs):
-        """For a given recursion depth, find the solution that satisfies the given tolerance
-        or before max steps is reached.
+        """For a given recursion depth, find distribution over agent prediction
+        of the external field conditional on the environment bias fixed. Returns
+        solution that satisfies the given tolerance or before max steps is
+        reached.
 
         Wrapper for _solve_external_cond().
         
@@ -289,8 +291,8 @@ class Vision():
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
-            If True, reduce recusion by one to have a check for convergence.  This should
-            only be used internally by the function.
+            If True, reduce recusion by one to have a check for convergence.
+            This should only be used internally by the function.
         
         Returns
         -------
@@ -471,6 +473,10 @@ Passive = Vision  # alias
 
 class Stigmergy(Vision):
     """Eigenvalue formulation for binary (h0, -h0) environment state.
+
+    Note that parameter v is given as v^2 in the paper and that it carries the
+    sign (destabilizer vs. stabilizer) in the simulation and not the variable
+    "weight".
     """
     def _init_addon(self, v=1, weight=1):
         self.v = v
@@ -488,17 +494,17 @@ class Stigmergy(Vision):
         self.leavecoeff *= (1 - stayprob) * self.tau
 
     def apply_transform_cond_external(self, phat):
-        """Imagine starting a system with equal probability on h0 and -h0. Then, one
-        iteration of transformation will maintain probability density with weight
-        (1-1/tau) conditional on starting at h0.  At the same time, probability with
-        weight 1/tau will flow in from -h0. Recurse.
+        """Imagine starting a system with equal probability on h0 and -h0. Then,
+        one iteration of transformation will maintain probability density with
+        weight (1-1/tau) conditional on starting at h0.  At the same time,
+        probability with weight 1/tau will flow in from -h0. Recurse.
 
-        One iteration of probability density transformation while keeping track of
-        density separately conditional on external field. 
+        One iteration of probability density transformation while keeping track
+        of density separately conditional on external field. 
 
         This is the eigenvalue problem except that we are keeping track of the
-        conditional probability distributions separately. The recursion number tells us
-        the order of the expansion.
+        conditional probability distributions separately. The recursion number
+        tells us the order of the expansion.
 
         Parameters
         ----------
