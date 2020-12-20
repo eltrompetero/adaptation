@@ -5,6 +5,8 @@
 import numpy as np
 from numba import njit
 from multiprocess import cpu_count
+import os
+
 
 
 @njit

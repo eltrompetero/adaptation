@@ -14,6 +14,9 @@ from threadpoolctl import threadpool_limits
 
 class Vision():
     """Eigenvalue formulation for binary (h0, -h0) environment state.
+
+    For divergence landscape, use .dkl() to calculate divergence as a function of memory
+    weighting term beta.
     """
     def __init__(self, tau, h0, beta, nBatch,
                  L=.5, dx=None, **kwargs):
@@ -472,13 +475,18 @@ Passive = Vision  # alias
 
 
 class Stigmergy(Vision):
-    """Eigenvalue formulation for binary (h0, -h0) environment state.
+    """Eigenvalue formulation for binary (h0, -h0) environment state. See Vision class for
+    more details.
 
-    Note that parameter v is given as v^2 in the paper and that it carries the
-    sign (destabilizer vs. stabilizer) in the simulation and not the variable
-    "weight".
+    Note that parameter v in the code is given as v^2 in the paper and that it carries the
+    sign (destabilizer vs. stabilizer) in the simulation and not the variable "weight"
+    which corresponds to the absolute value of the alpha parameter in the paper.
     """
     def _init_addon(self, v=1, weight=1):
+        """For destabilizers v<0 and for stabilizers v>0 (which is more intuitive but at
+        odds with the specification in the paper).
+        """
+
         self.v = v
         self.weight = weight
         
@@ -649,11 +657,49 @@ class Stigmergy(Vision):
         else:
             v = self.v
             weight = self.weight
+            # boundary for the stabilizer weight to prevent negative timescales
+            assert weight<=(1 / (self.tau-1))
             
-        if type(dh) is np.ndarray:
+        if isinstance(dh, np.ndarray):
             return (1 - 1/self.tau + weight * v / self.tau / (dh*dh + v)).clip(0)
         else:
             return max(1 - 1/self.tau + weight * v / self.tau / (dh*dh + v), 0)
+
+    def tau_e_moments(self, order, phat):
+        """Calculate moments of environmental change timescale using
+        transformation of variables relating tau_e to h.
+
+        Parameters
+        ----------
+        order : int
+            Order of moment to calculate where order=1 would be the mean.
+        phat : ndarray
+
+        Returns
+        -------
+        ndarray
+        """
+        
+        assert order>=1
+        order = float(order)
+
+        # convert sim parameters to those in eq given in pg. 8 of Learning II
+        v2 = abs(self.v)
+        alpha = np.sign(self.v) * self.weight
+        h0 = self.h0
+        h = self.x
+        taue0 = self.tau
+        # transform h to tau_e
+        # we don't need to consider all h because it symmetric about h0
+        # numerical errors suggest using h<h0 (at h=h0 we get infinity)
+        selectix = h<h0
+        taue = 1 / ( 1/taue0 - alpha * (1-1/taue0) * v2 / (v2 + (h[selectix]-h0)**2) )
+
+        termToAvg = ((taue0 * (v2 + (h[selectix]-h0)**2) /
+                     (v2 + (h[selectix]-h0)**2 - alpha * v2 * (taue0-1)))**order)
+        jac = (np.sqrt(v2) / taue**2 / 2 / np.sqrt( alpha * (1-1/taue0) / (1/taue0 - 1/taue) - 1 ) *
+               alpha * (1-1/taue0) / (1/taue0 - 1/taue)**2)
+        return np.trapz(phat[selectix] * jac * termToAvg, taue)
 #end Stigmergy
 
 
@@ -742,7 +788,8 @@ class Landscape():
 
 
 class AgentLandscape():
-    """Fixed environment with varying agent properties.
+    """Show 2D landscape of agent properties with a fixed environment with varying agent
+    properties.
     """
     def __init__(self, env_prop, agent_prop, beta_range, nbatch_range):
         """
