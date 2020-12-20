@@ -657,8 +657,6 @@ class Stigmergy(Vision):
         else:
             v = self.v
             weight = self.weight
-            # boundary for the stabilizer weight to prevent negative timescales
-            assert weight<=(1 / (self.tau-1))
             
         if isinstance(dh, np.ndarray):
             return (1 - 1/self.tau + weight * v / self.tau / (dh*dh + v)).clip(0)
