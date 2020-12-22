@@ -31,7 +31,7 @@ class Vision():
             Weight on memory.
         nBatch : int
             Number of samples from which to learn. This determines Gaussian noise profile.
-        L : float, 1
+        L : float, .5
             Max positive value of lattice. Domain spans [-L, L].
         dx : float, None
             Spacing of points on lattice spreading out from x=0.
@@ -166,8 +166,8 @@ class Vision():
         recursion_depth : int
         no_of_one_degree_steps : int, 3
             Number of first order approximations to run to get an approximate starting form.
-        tol : float, 1e-3
-        tmax : int, 20
+        tol : float, 1e-5
+        tmax : int, 30
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
@@ -422,6 +422,7 @@ class Vision():
         def loop_wrapper(args):
             i, beta, recurse = args
             
+            # return cached copy
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
@@ -449,15 +450,15 @@ class Vision():
                 errs.append(output[1])
                 x.append(output[2])
         
-        return self._dkl_end(beta_range, phatpos, x), np.vstack(errs)
+        return self._dkl_end(beta_range, phatpos, errs, x), np.vstack(errs)
 
-    def _dkl_end(self, beta_range, phatpos, x):
+    def _dkl_end(self, beta_range, phatpos, errs, x):
         solvedDkl = np.zeros_like(beta_range)
         
         # use outputs to calculate typical unfitness
         for i, beta in enumerate(beta_range):
             if not beta in self.cache_phatpos.keys():
-                self.cache_phatpos[beta] = x[i], phatpos[i]
+                self.cache_phatpos[beta] = phatpos[i], errs[i], x[i]
             
             # properly weighted average of DKL
             # dkl as a function of x
@@ -483,8 +484,8 @@ class Stigmergy(Vision):
     which corresponds to the absolute value of the alpha parameter in the paper.
     """
     def _init_addon(self, v=1, weight=1):
-        """For destabilizers v<0 and for stabilizers v>0 (which is more intuitive but at
-        odds with the specification in the paper).
+        """For destabilizers v<0 and for stabilizers v>0 (which is more intuitive but the
+        negative of the specification in the paper).
         """
 
         self.v = v
@@ -568,6 +569,7 @@ class Stigmergy(Vision):
     def dkl(self, beta_range,
             recurse=None,
             n_cpus=None,
+            dx_res_factor=None,
             **kwargs):
         """Calculate Kullback-Leibler divergence across a range of beta.
 
@@ -578,6 +580,8 @@ class Stigmergy(Vision):
             If list, specifies recursion depth to use for each beta specified. As a good
             rule of thumb, this should be several times the time scale implied by beta.
         n_cpus : int, None
+        dx_res_factor : float, None
+            In case you need more fine-grained control over dx interval.
         **kwargs
 
         Returns
@@ -605,7 +609,10 @@ class Stigmergy(Vision):
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta][1]
             
-            dx = default_x_spacing(beta, self.h0, self.nBatch)
+            if dx_res_factor:
+                dx = default_x_spacing(beta, self.h0, self.nBatch, dx_res_factor)
+            else:
+                dx = default_x_spacing(beta, self.h0, self.nBatch)
             if self.v>0:  # higher density of points for stabilizers
                 dx /= 1.25
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
@@ -634,7 +641,7 @@ class Stigmergy(Vision):
                 scost.append(output[2])
                 x.append(output[3])
 
-        return self._dkl_end(beta_range, phatpos, x), np.vstack(errs), np.array(scost)
+        return self._dkl_end(beta_range, phatpos, errs, x), np.vstack(errs), np.array(scost)
 
     def binary_env_stay_p(self, dh):
         """Probability at each time step that the environment remains fixed and the
@@ -663,7 +670,7 @@ class Stigmergy(Vision):
         else:
             return max(1 - 1/self.tau + weight * v / self.tau / (dh*dh + v), 0)
 
-    def tau_e_moments(self, order, phat):
+    def tau_e_moments(self, order, phat, x=None):
         """Calculate moments of environmental change timescale using
         transformation of variables relating tau_e to h.
 
@@ -672,10 +679,14 @@ class Stigmergy(Vision):
         order : int
             Order of moment to calculate where order=1 would be the mean.
         phat : ndarray
+            Probability density of agent bias h.
+        x : ndarray, None
+            Domain.
 
         Returns
         -------
         ndarray
+            Desired moment of tilde taue.
         """
         
         assert order>=1
@@ -683,21 +694,39 @@ class Stigmergy(Vision):
 
         # convert sim parameters to those in eq given in pg. 8 of Learning II
         v2 = abs(self.v)
-        alpha = np.sign(self.v) * self.weight
+        alpha = -np.sign(self.v) * self.weight  # remember it's the neg of the code
         h0 = self.h0
-        h = self.x
+        if x is None:
+            h = self.x
+        else:
+            h = x
         taue0 = self.tau
-        # transform h to tau_e
-        # we don't need to consider all h because it symmetric about h0
-        # numerical errors suggest using h<h0 (at h=h0 we get infinity)
-        selectix = h<h0
-        taue = 1 / ( 1/taue0 - alpha * (1-1/taue0) * v2 / (v2 + (h[selectix]-h0)**2) )
 
-        termToAvg = ((taue0 * (v2 + (h[selectix]-h0)**2) /
-                     (v2 + (h[selectix]-h0)**2 - alpha * v2 * (taue0-1)))**order)
-        jac = (np.sqrt(v2) / taue**2 / 2 / np.sqrt( alpha * (1-1/taue0) / (1/taue0 - 1/taue) - 1 ) *
-               alpha * (1-1/taue0) / (1/taue0 - 1/taue)**2)
-        return np.trapz(phat[selectix] * jac * termToAvg, taue)
+        # transform h to tau_e
+        # distance term is symmetric about h0 so must consider both branches of quadratic soln
+        selectix = h<=h0
+        nselectix = h>=h0
+        taue = 1 / ( 1/taue0 + alpha * v2 / taue0 / (v2 + (h[selectix]-h0)**2) )
+        ntaue = 1 / ( 1/taue0 + alpha * v2 / taue0 / (v2 + (h[nselectix]-h0)**2) )
+        termToAvg = taue**order
+        ntermToAvg = ntaue**order
+
+        jac = (alpha * taue0 * np.sqrt(v2) / 
+               2 / (taue - taue0)**1.5 / np.sqrt(taue0 - (alpha+1) * taue))
+        njac = (alpha * taue0 * np.sqrt(v2) / 
+                2 / (ntaue - taue0)**1.5 / np.sqrt(taue0 - (alpha+1) * ntaue))
+        
+        # sanity checks
+        assert np.isclose(np.trapz(phat, h), 1)
+        part1 = np.trapz(phat[selectix] * jac, taue) * np.sign(alpha)
+        part2 = np.trapz(phat[nselectix] * njac, ntaue) * -np.sign(alpha)
+        if np.abs((part1+part2)-1)>1e-2:
+            warn(f"Substantial error in transformed distribution p(tau_e)={part1+part2}.")
+        
+        # integrate over two solutions separately
+        part1 = np.trapz(phat[selectix] * jac * termToAvg, taue) * np.sign(alpha)
+        part2 = np.trapz(phat[nselectix] * njac * ntermToAvg, ntaue) * -np.sign(alpha)
+        return part1 + part2
 #end Stigmergy
 
 

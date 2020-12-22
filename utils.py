@@ -260,7 +260,7 @@ def find_chebmin(*args, **kwargs):
     mnix = np.argmin(spline(roots))
     return roots[mnix], spline(roots[mnix])
 
-def default_x_spacing(beta, h0, nBatch):
+def default_x_spacing(beta, h0, nBatch, res_factor=4):
     """Building off rough results about how width of peaks around he=h0 shrink with beta
     and nBatch, get a working estimate of resolution needed for the x-axis (field axis).
 
@@ -269,6 +269,8 @@ def default_x_spacing(beta, h0, nBatch):
     beta : float
     h0 : float
     nBatch : int
+    res_factor : float, 4
+        Increase this to reduce dx spacing.
 
     Returns
     -------
@@ -277,5 +279,5 @@ def default_x_spacing(beta, h0, nBatch):
     
     if beta==0:
         return default_x_spacing(1e-10, h0, nBatch)
-    dx = np.sqrt(pplus(h0) * pminus(h0) / nBatch / (-1/np.log(beta))) / 4
+    dx = np.sqrt(pplus(h0) * pminus(h0) / nBatch / (-1/np.log(beta))) / res_factor
     return dx
