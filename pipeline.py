@@ -231,3 +231,125 @@ def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
             
         varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
         save_pickle(varlist, 'cache/eigen_stabilizer_tau_range.p', True)
+
+def effective_timescales_stabilizer():
+    """Comparing divergence profiles for stabilizer with passive agent at 
+    effective timescales.
+    """
+    
+    # set agent/env properties
+    h0 = .2
+    nBatch = 1_000
+
+    # specify range to solve for
+    betaRange = lobatto_beta(45)
+    
+    def loop_wrapper(tau):
+        """Inner function to run eigenfunction solution procedure on 
+        stabilizer and passive agents."""
+        
+        # solve
+        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=.01)
+        dkl, errs, cost = solver.dkl(betaRange,
+                                     iprint=False,
+                                     dx_res_factor=8)
+
+        # average decay rate once having accounted for stabilization
+        meanTau = np.zeros_like(betaRange)
+        for i, beta in enumerate(betaRange):
+            p, _, x = solver.cache_phatpos[beta]
+            # this is just like weighting each observation directly by probability
+            # assuming that we have a discrete space
+            # seems like it's missing a jacobian, but it works really well
+            # meanTau[i] = 1/(1 - trapz(solver.binary_env_stay_p(x-h0) * p, x))
+            meanTau[i] = 1/(1 - solver.binary_env_stay_p(x-h0).dot(p/p.sum()))
+        
+        # passive agent shifted to new effective timescale
+        vdkl = np.zeros_like(betaRange)
+        verrs = np.zeros_like(betaRange)
+
+        for i in range(betaRange.size):
+            vsolver = eigen.Passive(meanTau[i], h0, 0, nBatch)
+            vdkl[i], verrs[i] = vsolver.dkl(np.array([betaRange[i]]),
+                                            iprint=False,
+                                            dx_res_factor=2)
+
+        # what passive looks like if not accounting for new averaged time scale
+        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
+        ovdkl, overrs = ovsolver.dkl(betaRange,
+                                     dx_res_factor=2,
+                                     iprint=False)
+        
+        return (dkl, errs), (vdkl, verrs), (ovdkl, overrs)
+    
+    tauRange = [10, 50, 250, 1250]
+    dkl = {}
+    vdkl = {}
+    ovdkl = {}
+    for tau in tauRange:
+        dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
+        print(f"Done with {tau}.")
+        
+    save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
+                'cache/effective_timescales_stabilizer.p', True)
+
+def effective_timescales_destabilizer():
+    """Comparing divergence profiles for stabilizer with passive agent at 
+    effective timescales.
+    """
+    
+    # set agent/env properties
+    h0 = .2
+    nBatch = 1_000
+
+    # specify range to solve for
+    betaRange = lobatto_beta(45)
+    
+    def loop_wrapper(tau):
+        """Inner function to run eigenfunction solution procedure on 
+        stabilizer and passive agents."""
+        
+        # solve
+        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=-.01)
+        dkl, errs, cost = solver.dkl(betaRange,
+                                     iprint=False,
+                                     dx_res_factor=2)
+
+        # average decay rate once having accounted for stabilization
+        meanTau = np.zeros_like(betaRange)
+        for i, beta in enumerate(betaRange):
+            p, _, x = solver.cache_phatpos[beta]
+            # this is just like weighting each observation directly by probability
+            # assuming that we have a discrete space
+            # seems like it's missing a jacobian, but it works really well
+            # meanTau[i] = 1/(1 - trapz(solver.binary_env_stay_p(x-h0) * p, x))
+            meanTau[i] = 1/(1 - solver.binary_env_stay_p(x-h0).dot(p/p.sum()))
+        
+        # passive agent shifted to new effective timescale
+        vdkl = np.zeros_like(betaRange)
+        verrs = np.zeros_like(betaRange)
+
+        for i in range(betaRange.size):
+            vsolver = eigen.Passive(meanTau[i], h0, 0, nBatch)
+            vdkl[i], verrs[i] = vsolver.dkl(np.array([betaRange[i]]),
+                                            iprint=False,
+                                            dx_res_factor=2)
+
+        # what passive looks like if not accounting for new averaged time scale
+        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
+        ovdkl, overrs = ovsolver.dkl(betaRange,
+                                     dx_res_factor=2,
+                                     iprint=False)
+        
+        return (dkl, errs), (vdkl, verrs), (ovdkl, overrs)
+    
+    tauRange = [10, 50, 250, 1250]
+    dkl = {}
+    vdkl = {}
+    ovdkl = {}
+    for tau in tauRange:
+        dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
+        print(f"Done with {tau}.")
+        
+    save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
+                'cache/effective_timescales_destabilizer.p', True)

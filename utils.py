@@ -275,9 +275,10 @@ def default_x_spacing(beta, h0, nBatch, res_factor=4):
     Returns
     -------
     float
+        Max value of .01 if beta>0.
     """
     
     if beta==0:
         return default_x_spacing(1e-10, h0, nBatch)
-    dx = np.sqrt(pplus(h0) * pminus(h0) / nBatch / (-1/np.log(beta))) / res_factor
+    dx = min(np.sqrt(pplus(h0) * pminus(h0) / nBatch / (-1/np.log(beta))) / res_factor, .01)
     return dx

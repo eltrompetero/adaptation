@@ -345,6 +345,9 @@ class Vision():
         tol : float, 1e-5
         mx_tol : float, 1e6
         tmax : int, 1000
+            Max number of iterations to run to convergence. If it has not converged by
+            this number, seems like it will not converge for precision reasons (domain
+            resolution dx needs to be finer).
         cache : bool, True
             If True, cache results.
         recursion_check : bool, True
@@ -393,6 +396,7 @@ class Vision():
     def dkl(self, beta_range,
             recurse=None,
             n_cpus=None,
+            dx_res_factor=None,
             **kwargs):
         """Calculate Kullback-Leibler divergence across a range of beta. Automatically
         adjusts resolution along domain to best calculate DKL landscape.
@@ -404,6 +408,8 @@ class Vision():
             If list, specifies recursion depth to use for each beta specified. As a good
             rule of thumb, this should be several times the time scale implied by beta.
         n_cpus : int, None
+        dx_res_factor : float, None
+            In case you need more fine-grained control over dx interval.
         **kwargs
 
         Returns
@@ -426,13 +432,19 @@ class Vision():
             if beta in self.cache_phatpos.keys():
                 return self.cache_phatpos[beta]
             
-            dx = default_x_spacing(beta, self.h0, self.nBatch)
+            # apply resolution factor
+            if dx_res_factor is None:
+                dx = default_x_spacing(beta, self.h0, self.nBatch)
+            else:
+                dx = default_x_spacing(beta, self.h0, self.nBatch) / dx_res_factor
+            
+            # create a copy of the class for this beta
             solver = self.__class__(self.tau, self.h0, beta, self.nBatch,
                                     dx=dx, L=self.L)
             phatpos, errflag, errs = solver.solve_external_cond(**kwargs)
             x = solver.x
             if errs[0]>1:
-                print("Large iteration error %f for beta = %f."%(errs[0],beta))
+                print("Large iteration error %f for beta = %f."%(errs[0], beta))
             return phatpos, errs, x
         
         args = zip(range(beta_range.size), beta_range, recurse)
@@ -453,6 +465,7 @@ class Vision():
         return self._dkl_end(beta_range, phatpos, errs, x), np.vstack(errs)
 
     def _dkl_end(self, beta_range, phatpos, errs, x):
+        """Cache results and calculate divergence."""
         solvedDkl = np.zeros_like(beta_range)
         
         # use outputs to calculate typical unfitness
@@ -503,17 +516,17 @@ class Stigmergy(Vision):
         self.leavecoeff *= (1 - stayprob) * self.tau
 
     def apply_transform_cond_external(self, phat):
-        """Imagine starting a system with equal probability on h0 and -h0. Then,
-        one iteration of transformation will maintain probability density with
-        weight (1-1/tau) conditional on starting at h0.  At the same time,
-        probability with weight 1/tau will flow in from -h0. Recurse.
+        """Imagine starting a system with equal probability on h0 and -h0. Then, one
+        iteration of transformation will maintain probability density with weight
+        (1-1/tau) conditional on starting at h0.  At the same time, probability with
+        weight 1/tau will flow in from -h0. Recurse.
 
-        One iteration of probability density transformation while keeping track
-        of density separately conditional on external field. 
+        One iteration of probability density transformation while keeping track of density
+        separately conditional on external field. 
 
-        This is the eigenvalue problem except that we are keeping track of the
-        conditional probability distributions separately. The recursion number
-        tells us the order of the expansion.
+        This is the eigenvalue problem except that we are keeping track of the conditional
+        probability distributions separately. The recursion number tells us the order of
+        the expansion.
 
         Parameters
         ----------
@@ -607,7 +620,7 @@ class Stigmergy(Vision):
             i, beta, recurse = args
             
             if beta in self.cache_phatpos.keys():
-                return self.cache_phatpos[beta][1]
+                return self.cache_phatpos[beta]
             
             if dx_res_factor:
                 dx = default_x_spacing(beta, self.h0, self.nBatch, dx_res_factor)
@@ -641,7 +654,27 @@ class Stigmergy(Vision):
                 scost.append(output[2])
                 x.append(output[3])
 
-        return self._dkl_end(beta_range, phatpos, errs, x), np.vstack(errs), np.array(scost)
+        return self._dkl_end(beta_range, phatpos, errs, scost, x), np.vstack(errs), np.array(scost)
+
+    def _dkl_end(self, beta_range, phatpos, errs, scost, x):
+        """Cache results and calculate divergence."""
+        solvedDkl = np.zeros_like(beta_range)
+        
+        # use outputs to calculate typical unfitness
+        for i, beta in enumerate(beta_range):
+            if not beta in self.cache_phatpos.keys():
+                self.cache_phatpos[beta] = phatpos[i], errs[i], scost[i], x[i]
+            
+            # properly weighted average of DKL
+            # dkl as a function of x
+            dkl = (pplus(self.h0) * ( np.log(pplus(self.h0)) - np.log(pplus(x[i])) ) +
+                   pminus(self.h0) * ( np.log(pminus(self.h0)) - np.log(pminus(x[i])) ))
+            M = np.ones(x[i].size) * (x[i][1]-x[i][0])
+            M[0] /= 2
+            M[-1] /= 2
+
+            solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
+        return solvedDkl 
 
     def binary_env_stay_p(self, dh):
         """Probability at each time step that the environment remains fixed and the
@@ -717,16 +750,18 @@ class Stigmergy(Vision):
                 2 / (ntaue - taue0)**1.5 / np.sqrt(taue0 - (alpha+1) * ntaue))
         
         # sanity checks
-        assert np.isclose(np.trapz(phat, h), 1)
+        #assert np.isclose(np.trapz(phat, h), 1)
         part1 = np.trapz(phat[selectix] * jac, taue) * np.sign(alpha)
         part2 = np.trapz(phat[nselectix] * njac, ntaue) * -np.sign(alpha)
         if np.abs((part1+part2)-1)>1e-2:
             warn(f"Substantial error in transformed distribution p(tau_e)={part1+part2}.")
         
         # integrate over two solutions separately
-        part1 = np.trapz(phat[selectix] * jac * termToAvg, taue) * np.sign(alpha)
-        part2 = np.trapz(phat[nselectix] * njac * ntermToAvg, ntaue) * -np.sign(alpha)
-        return part1 + part2
+        #part1 = np.trapz(phat[selectix] * jac * termToAvg, taue) * np.sign(alpha)
+        #part2 = np.trapz(phat[nselectix] * njac * ntermToAvg, ntaue) * -np.sign(alpha)
+        #return part1 + part2
+
+        return (phat[selectix].dot(termToAvg) + phat[nselectix].dot(ntermToAvg)) / phat.sum()
 #end Stigmergy
 
 
