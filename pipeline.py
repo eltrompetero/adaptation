@@ -242,7 +242,7 @@ def effective_timescales_stabilizer():
     nBatch = 1_000
 
     # specify range to solve for
-    betaRange = lobatto_beta(45)
+    betaRange = lobatto_beta(55)
     
     def loop_wrapper(tau):
         """Inner function to run eigenfunction solution procedure on 
@@ -257,7 +257,7 @@ def effective_timescales_stabilizer():
         # average decay rate once having accounted for stabilization
         meanTau = np.zeros_like(betaRange)
         for i, beta in enumerate(betaRange):
-            p, _, x = solver.cache_phatpos[beta]
+            p, _, scost, x = solver.cache_phatpos[beta]
             # this is just like weighting each observation directly by probability
             # assuming that we have a discrete space
             # seems like it's missing a jacobian, but it works really well
@@ -313,12 +313,12 @@ def effective_timescales_destabilizer():
         solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=-.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
-                                     dx_res_factor=2)
+                                     dx_res_factor=4)
 
         # average decay rate once having accounted for stabilization
         meanTau = np.zeros_like(betaRange)
         for i, beta in enumerate(betaRange):
-            p, _, x = solver.cache_phatpos[beta]
+            p, _, scost, x = solver.cache_phatpos[beta]
             # this is just like weighting each observation directly by probability
             # assuming that we have a discrete space
             # seems like it's missing a jacobian, but it works really well
@@ -343,7 +343,7 @@ def effective_timescales_destabilizer():
         
         return (dkl, errs), (vdkl, verrs), (ovdkl, overrs)
     
-    tauRange = [10, 50, 250, 1250]
+    tauRange = [10, 50, 250, 1250, 6250]
     dkl = {}
     vdkl = {}
     ovdkl = {}
