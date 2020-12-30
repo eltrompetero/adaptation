@@ -13,7 +13,7 @@ SEED = 1  # fixed seed for generating trajectories, reduces variance, increases 
 
 
 
-def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
+def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     """Agent unfitness landscape for environments changing with timescale. From "agents in
     binary environment.ipynb", using ABS.
 
@@ -21,7 +21,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
     ----------
     run_passive : bool, True
     run_stabilizer : bool, True
-    run_dissipator : bool, True
+    run_destabilizer : bool, True
     """
 
     seed = SEED
@@ -49,8 +49,8 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/vision_agent_sim_tau_range.p', True)
 
-    # dissipator
-    if run_dissipator:
+    # destabilizer
+    if run_destabilizer:
         kwargs = {'noise':{'type':'binary', 'scale':.2, 'weight':.95, 'v':-.01},
                   'T':10_000_000,
                   'nBatch':1_000}
@@ -66,7 +66,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
             print("Done with tau=%1.1E."%tau)
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
-                    'cache/dissipator_agent_sim_tau_range.p', True)
+                    'cache/destabilizer_agent_sim_tau_range.p', True)
 
     # stabilizer
     if run_stabilizer:
@@ -87,7 +87,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_dissipator=True):
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/stabilizer_agent_sim_tau_range.p', True)
 
-def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
+def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     """Landscapes for optimal memory and memory/forgetting tradeoff. From "info
     gain.ipynb."
 
@@ -95,7 +95,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
     ----------
     run_passive : bool, True
     run_stabilizer : bool, True
-    run_dissipator : bool, True
+    run_destabilizer : bool, True
     """
 
     seed = SEED
@@ -149,8 +149,8 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
         save_pickle(['learners', 'scaleRange', 'nBatchRange', 'betaRange', 'tau', 'seed', 'T', 'dkl'],
                     'cache/stabilizer_agent_landscape.p', True)
 
-    # dissipator
-    if run_dissipator:
+    # destabilizer
+    if run_destabilizer:
         learners = {}
         dkl = {}
         for scale, nBatch in product(scaleRange, nBatchRange):
@@ -165,19 +165,19 @@ def info_gain(run_passive=True, run_stabilizer=True, run_dissipator=True):
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
-        print("Saving dissipator simulation.")
+        print("Saving destabilizer simulation.")
         print()
         save_pickle(['learners', 'scaleRange', 'nBatchRange', 'betaRange', 'tau', 'seed', 'T', 'dkl'],
-                    'cache/dissipator_agent_landscape.p', True)
+                    'cache/destabilizer_agent_landscape.p', True)
 
-def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
+def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True):
     """Agent unfitness as a function of environmental timescale using eigenfunction solution
     method.
 
     Parameters
     ----------
     run_passive : bool, True
-    run_dissipator : bool, True
+    run_destabilizer : bool, True
     run_stabilizer : bool, True
     """
 
@@ -202,7 +202,7 @@ def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
         save_pickle(['edkl', 'errs', 'betaRange', 'h0', 'tauRange'],
                     'cache/eigen_passive_tau_range.p', True)
     
-    if run_dissipator:
+    if run_destabilizer:
         v = -.01
         solvers = {}
         edkl = {}
@@ -215,7 +215,7 @@ def tau_range_eigen(run_passive=True, run_dissipator=True, run_stabilizer=True):
             print("Done with tau=%E."%tau)
             
         varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
-        save_pickle(varlist, 'cache/eigen_dissipator_tau_range.p', True)
+        save_pickle(varlist, 'cache/eigen_destabilizer_tau_range.p', True)
 
     if run_stabilizer:
         v = .01
@@ -353,3 +353,18 @@ def effective_timescales_destabilizer():
         
     save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
                 'cache/effective_timescales_destabilizer.p', True)
+
+def costs_example():
+    """Example of divergence landscape with algorithmic costs.
+    """
+
+    degfit = 35
+    betaRange = lobatto_beta(degfit)
+
+    learner = eigen.Stigmergy(100, .2, 0, 1_000, L=.5, dx=2.5e-4, weight=.95, v=.01)
+    dkl, errs, cost = learner.dkl(betaRange)
+
+    betaPlot = linspace_beta(1e-2, 1e3, 200)
+    save_pickle(['dkl', 'betaRange', 'betaPlot', 'errs', 'cost'],
+                        'plotting/cost_tradeoff_example.p', True)
+
