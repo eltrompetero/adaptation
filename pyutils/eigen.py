@@ -870,8 +870,8 @@ class AgentLandscape():
         assert 'h0' in env_prop.keys()
         self.envProp = env_prop
 
-        assert 'weight' in agent_prop.keys()
-        assert 'v' in agent_prop.keys()
+        agent_prop['weight'] = agent_prop.get('weight', 0)
+        agent_prop['v'] = agent_prop.get('v', 0)
         self.agentProp = agent_prop
 
     def run(self, n_cpus=None):
@@ -896,7 +896,32 @@ class AgentLandscape():
         scale = self.envProp['h0']
         weight = self.agentProp['weight']
         v = self.agentProp['v']
+        
+        if weight==0 or v==0:
+            def loop_wrapper(args):
+                nbatch, beta = args
+                # must be careful to maintain small enough spacing for accurate computation
+                # note that we do not go beyond h0=1 for standard sims and following
+                # parameters suffice
+                solver = Passive(tau, scale, 0, nbatch,
+                                 L=max(.5,scale*2.5))
+                return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
+            with threadpool_limits(limits=1, user_api='blas'):
+                with mp.Pool(nCpus) as pool:
+                    args = product(self.nBatchRange, self.betaRange)
+                    dkl_, errs_ = list(zip(*pool.map(loop_wrapper, args)))
+
+            # group by landscape axes
+            n = self.betaRange.size
+            dkl = np.vstack([np.concatenate(dkl_[i*n:(i+1)*n]) for i in range(len(dkl_)//n)])
+            errs = np.vstack([np.vstack(errs_[i*n:(i+1)*n]).ravel() for i in range(len(errs_)//n)])
+            
+            self.dkl = dkl
+            self.errs = errs
+            return dkl, errs
+        
+        # active agents
         def loop_wrapper(args):
             nbatch, beta = args
             # must be careful to maintain small enough spacing for accurate computation
