@@ -366,5 +366,5 @@ def costs_example():
 
     betaPlot = linspace_beta(1e-2, 1e3, 200)
     save_pickle(['dkl', 'betaRange', 'betaPlot', 'errs', 'cost'],
-                        'plotting/cost_tradeoff_example.p', True)
+                 'plotting/cost_tradeoff_example.p', True)
 

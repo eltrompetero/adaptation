@@ -97,7 +97,31 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
     return 1 - 1/tau + weight * v / tau / (dh*dh + v)
 
 def memory_cost(t, minpos=0):
+    """Complexity of memory.
+
+    Parameters
+    ----------
+    t : ndarray
+        Memory timescale.
+    minpos: float, True
+        Set min offset so all values are above specified value.
+
+    Returns
+    -------
+    np.ndarray
+        In units of bits.
     """
+    
+    memCost = np.log2(1 + 1/t)
+    
+    # fixed offset
+    memCost += minpos
+
+    return memCost
+
+def _memory_cost(t, minpos=0):
+    """Deprecated cost.
+    
     Parameters
     ----------
     t : ndarray
