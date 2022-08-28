@@ -1,5 +1,6 @@
 # ====================================================================================== #
 # Module for learning algorithms comparing passive and active adaptation.
+# 
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 import numpy as np
@@ -34,8 +35,8 @@ def entropy(h, base=2):
     return (-pplus(h) * np.log(pplus(h)) - pminus(h) * np.log(pminus(h))) / np.log(base)
 
 def linspace_beta(tau_mn, tau_mx, n):
-    """Convenience function for creating range of beta such that the memory timescales are
-    equally spaced in log space.
+    """Convenience function for creating range of beta such that the memory
+    timescales are equally spaced in log space.
 
     Parameters
     ----------
@@ -74,8 +75,8 @@ def lobatto_beta(deg):
 @njit
 def binary_env_stay_rate(dh, tau, v, weight=1):
     """Probability at each time step that the environment remains fixed and the
-    probability that it switches. This is for a stabilizer. For a dissipator, one should
-    simply switch the two probabilities.
+    probability that it switches. This is for a stabilizer. For a dissipator,
+    one should simply switch the two probabilities.
     
     Parameters
     ----------
@@ -83,8 +84,8 @@ def binary_env_stay_rate(dh, tau, v, weight=1):
     tau : float
     v : float
     weight : float, 1.
-        When weight=0, this is equivalent to Vision (passive) agent. When this is 1,
-        dissipation or stabilization saturates at dh=0.
+        When weight=0, this is equivalent to Vision (passive) agent. When this
+        is 1, dissipation or stabilization saturates at dh=0.
 
     Returns
     -------
@@ -170,8 +171,8 @@ def interpolate(beta_range, dkl, h0,
                 method='chebyshev',
                 return_coeffs=False,
                 logy=True):
-    """Interpolate calculated trajectory using known endpoints. Default settings are for
-    unfitness curve.
+    """Interpolate calculated trajectory using known endpoints. Default settings
+    are for unfitness curve.
 
     Only interpolate through points with sufficiently small errors.
 
@@ -285,8 +286,9 @@ def find_chebmin(*args, **kwargs):
     return roots[mnix], spline(roots[mnix])
 
 def default_x_spacing(beta, h0, nBatch, res_factor=4):
-    """Building off rough results about how width of peaks around he=h0 shrink with beta
-    and nBatch, get a working estimate of resolution needed for the x-axis (field axis).
+    """Building off rough results about how width of peaks around he=h0 shrink
+    with beta and nBatch, get a working estimate of resolution needed for the
+    x-axis (field axis).
 
     Parameters
     ----------

@@ -890,14 +890,13 @@ class AgentLandscape():
         """
 
         from itertools import product
-        nCpus = mp.cpu_count()-1 if n_cpus is None else n_cpus
 
         tau = self.envProp['tau']
         scale = self.envProp['h0']
         weight = self.agentProp['weight']
         v = self.agentProp['v']
         
-        if weight==0 or v==0:
+        if weight==0 or v==0:  # if passive agent
             def loop_wrapper(args):
                 nbatch, beta = args
                 # must be careful to maintain small enough spacing for accurate computation
@@ -908,7 +907,7 @@ class AgentLandscape():
                 return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
             with threadpool_limits(limits=1, user_api='blas'):
-                with mp.Pool(nCpus) as pool:
+                with mp.Pool(n_cpus) as pool:
                     args = product(self.nBatchRange, self.betaRange)
                     dkl_, errs_ = list(zip(*pool.map(loop_wrapper, args)))
 
@@ -933,7 +932,7 @@ class AgentLandscape():
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
 
         with threadpool_limits(limits=1, user_api='blas'):
-            with mp.Pool(nCpus) as pool:
+            with mp.Pool(n_cpus) as pool:
                 args = product(self.nBatchRange, self.betaRange)
                 dkl_, errs_, scost_ = list(zip(*pool.map(loop_wrapper, args)))
 

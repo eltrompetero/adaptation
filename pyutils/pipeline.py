@@ -1,21 +1,23 @@
 # ====================================================================================== #
 # Module for pipelining calculations needed for paper.
+# 
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
 import numpy as np
-from . import agent, eigen
-from .utils import *
 from multiprocess import cpu_count
 from workspace.utils import save_pickle
 from itertools import product
+
+from . import agent, eigen
+from .utils import *
 
 SEED = 1  # fixed seed for generating trajectories, reduces variance, increases bias
 
 
 
 def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
-    """Agent unfitness landscape for environments changing with timescale. From "agents in
-    binary environment.ipynb", using ABS.
+    """Agent unfitness landscape for environments changing with timescale. From
+    "agents in binary environment.ipynb", using ABS.
 
     Parameters
     ----------
@@ -171,8 +173,8 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
                     'cache/destabilizer_agent_landscape.p', True)
 
 def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True):
-    """Agent unfitness as a function of environmental timescale using eigenfunction solution
-    method.
+    """Agent unfitness as a function of environmental timescale using
+    eigenfunction solution method.
 
     Parameters
     ----------

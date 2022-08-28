@@ -4,7 +4,6 @@
 # 
 # Author : Eddie Lee, edlee@santafe.edu
 # ====================================================================================== #
-from .utils import *
 from copy import deepcopy
 from numba.typed import Dict
 from numba import types
@@ -12,46 +11,52 @@ from warnings import warn
 import multiprocess as mp
 from threadpoolctl import threadpool_limits
 
+from .utils import *
 
 
 class Vision():
-    """Learn the probability distribution of a sequence of coin flips that evolves
-    according to Brownian spring (or Ornstein-Ulhenbeck process).
+    """Learn the probability distribution of a sequence of coin flips that
+    evolves according to Brownian spring (or Ornstein-Ulhenbeck process).
     
     One instance has a fixed noise trajectory that is decided once.
     """
     def __init__(self,
                  noise,
-                 nBatch = 20,
-                 T = 10_000,
-                 beta = .1,
+                 nBatch=20,
+                 T=10_000,
+                 beta=.1,
                  rng=None):
         """
         Parameters
         ----------
         noise : dict
             Noise to consider.
-            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck or 'binary'.
+
+            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck or
+            'binary'.
+
             For OU:
                 dragh : float, .01
                     Coeff on linear force pulling h back to 0, inverse time.
                 sigmah : float, 1 
-                    Std of normal distribution modifying h, specifying environmental noise per
-                    batch step, or rate fluctuations. This also determines the absolute timescale
-                    where unit steps in time are when sigmah=1.
+                    Std of normal distribution modifying h, specifying
+                    environmental noise per batch step, or rate fluctuations.
+                    This also determines the absolute timescale where unit steps
+                    in time are when sigmah=1.
             For binary:
                 tau : float
                     Decorrelation time for exponential distribution.
                 scale : float
                     Magnitude for binary values of fields.
         nBatch : int, 20
-            Number of samples on which the cells learn. Effectively, the time scale for
-            cell learning.
+            Number of samples on which the cells learn. Effectively, the time
+            scale for cell learning.
         T : int, 10_000
-            Number of iterations in terms of cell time (i.e., total number of samples is
-            nBatch x T).
+            Number of iterations in terms of cell time (i.e., total number of
+            samples is nBatch x T).
         beta : float, 0.1
-            Weight on history for learning. This is related to the decorrelation time.
+            Weight on history for learning. This is related to the decorrelation
+            time.
         rng : np.random.RandomState, None
         """
         
@@ -107,33 +112,32 @@ class Vision():
         self.alpha = 1 - beta
 
     def learn(self, beta_range, n_cpus=None, save=True, **kwargs):
-        """Learn distribution of environment as it evolves for a range of beta values.
+        """Learn distribution of environment as it evolves for a range of beta
+        values.
 
         Parameters
         ----------
         beta_range : ndarray
-            Learning weight for aggregator, effectively setting the time scale for the
-            feedback loop.
+            Learning weight for aggregator, effectively setting the time scale
+            for the feedback loop.
         n_cpus : int, None
         save : bool, True
         use_other_dkl : bool, False
-            Default is to measure probability distribution of h instead of hhat. Note that
-            using hhat as probability distribution can lead to infinities from numerical
-            precision errors.
+            Default is to measure probability distribution of h instead of hhat.
+            Note that using hhat as probability distribution can lead to
+            infinities from numerical precision errors.
 
         Returns
         -------
         ndarray
-            Averaged Kullback-Leibler divergence per given value of beta. Full simulation
-            results are saved in self.dkl.
+            Averaged Kullback-Leibler divergence per given value of beta. Full
+            simulation results are saved in self.dkl.
         """
 
         if beta_range is None:
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
         assert all([0<=b<=1 for b in beta_range])
-        if n_cpus is None:
-            n_cpus = cpu_count()-1
 
         hhat, H, dkl = {}, {}, {}
         rng = deepcopy(self.rng)
@@ -149,7 +153,7 @@ class Vision():
                                         self.nBatch,
                                         self.beta)
             
-            if n_cpus>1:
+            if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
                     hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                     hhat = dict(zip(beta_range, hhat_))
@@ -169,7 +173,7 @@ class Vision():
                                         self.nBatch,
                                         self.beta)[-1]
             
-            if n_cpus>1:
+            if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
                     dkl_ = list(pool.map(loop_wrapper, beta_range))
                     dkl = dict(zip(beta_range, dkl_))
@@ -177,7 +181,7 @@ class Vision():
                 for beta in beta_range:
                     dkl[beta] = loop_wrapper(beta)
         
-        # TODO: need to set better default timescale for averaging
+        # TODO: need to set a more principled default timescale for averaging
         return np.array([i[1000:].mean() for i in dkl.values()])
 
     def _learn(self, use_other_dkl=False):
@@ -203,9 +207,9 @@ class Vision():
             #if Xmu>(1-1e-16):
             #    Xmu = 1-1e-16
             # Laplace counting limits
-            if Xmu<(-1+2/self.nBatch):
+            if Xmu < (-1+2/self.nBatch):
                 Xmu = -1+2/self.nBatch
-            if Xmu>(1-2/self.nBatch):
+            if Xmu > (1-2/self.nBatch):
                 Xmu = 1-2/self.nBatch
 
             if t==0:
@@ -274,18 +278,18 @@ def jit_learn_vision(seed, T, h, nBatch, beta):
 
 
 class Stigmergy(Vision):
-    """Learn the probability distribution of a sequence of coin flips that evolves
-    according to Brownian spring (or Ornstein-Ulhenbeck process) with feedback from action
-    loop that depletes information in the environment. 
+    """Learn the probability distribution of a sequence of coin flips that
+    evolves according to Brownian spring (or Ornstein-Ulhenbeck process) with
+    feedback from action loop that depletes information in the environment. 
     
-    One instance of this class has a fixed noise trajectory that is established upon
-    initialization.
+    One instance of this class has a fixed noise trajectory that is established
+    upon initialization.
     """
     def __init__(self,
                  noise,
-                 nBatch = 20,
-                 T = 10_000,
-                 beta = .1,
+                 nBatch=20,
+                 T=10_000,
+                 beta=.1,
                  rng=None):
         """
         Parameters
@@ -295,23 +299,24 @@ class Stigmergy(Vision):
                 dragh : float, .001
                     Coeff on linear force pulling h back to 0, inverse time.
                 sigmah : float, .1 
-                    Std of normal distribution modifying h, specifying environmental noise per
-                    batch step, or the timescale of fluctuations.
+                    Std of normal distribution modifying h, specifying
+                    environmental noise per batch step, or the timescale of
+                    fluctuations.
             'binary'
                 tau : float
                 scale : float
         nBatch : int, 20
-            Number of samples on which the cells learn. Effectively, the time scale for
-            cell learning.
+            Number of samples on which the cells learn. Effectively, the time
+            scale for cell learning.
         T : int, 10_000
-            Number of iterations in terms of cell time (i.e., total number of samples is
-            nBatch x T).
+            Number of iterations in terms of cell time (i.e., total number of
+            samples is nBatch x T).
         beta : float, .1
-            Learning weight for aggregator, effectively setting the time scale for the
-            feedback loop.
+            Learning weight for aggregator, effectively setting the time scale
+            for the feedback loop.
         action_params : tuple, (1,1)
-            The two parameters determining the rate of the action feedback loop (u,v).
-            rate = u * ( (h-hhat)^2 + v )
+            The two parameters determining the rate of the action feedback loop
+            (u,v).  rate = u * ( (h-hhat)^2 + v )
         """
         
         assert nBatch>=1 and T>0
@@ -350,13 +355,14 @@ class Stigmergy(Vision):
               n_cpus=None,
               save=True,
               return_stab_cost=False):
-        """Learn distribution of environment as it evolves over a range of beta values.
+        """Learn distribution of environment as it evolves over a range of beta
+        values.
 
         Parameters
         ----------
         beta_range : ndarray
-            Learning weight for aggregator, effectively setting the time scale for the
-            feedback loop.
+            Learning weight for aggregator, effectively setting the time scale
+            for the feedback loop.
         n_cpus : int, None
         save : bool, True
         return_stab_cost : bool, False
@@ -366,8 +372,6 @@ class Stigmergy(Vision):
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
         assert all([0<=b<=1 for b in beta_range])
-        if n_cpus is None:
-            n_cpus = cpu_count()-1
 
         h, hhat, H, dkl, sCost = {}, {}, {}, {}, {}
         rng = deepcopy(self.rng)
@@ -406,7 +410,7 @@ class Stigmergy(Vision):
                                                                 self.nBatch,
                                                                 self.beta)
                
-            if n_cpus>1:
+            if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
                     h_, hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                 # read output
@@ -464,7 +468,7 @@ class Stigmergy(Vision):
                             return dkl, sCost
                         return dkl
                
-            if n_cpus>1:
+            if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
                     if return_stab_cost:
                         dkl_, sCost_ = list(zip(*pool.map(loop_wrapper, beta_range)))
@@ -489,10 +493,10 @@ class Stigmergy(Vision):
         return np.array([i[1000:].mean() for i in dkl.values()])
 
     def _learn(self):
-        """Learn distribution of environment as it evolves and is learned through
-        stigmergetic coupling.  Signal in environment decays with rate that grows with
-        strength of signal and with similarity between learned signal and true
-        signal.
+        """Learn distribution of environment as it evolves and is learned
+        through stigmergetic coupling.  Signal in environment decays with rate
+        that grows with strength of signal and with similarity between learned
+        signal and true signal.
         """
         
         h = np.zeros(self.T)
