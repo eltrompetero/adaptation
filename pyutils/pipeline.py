@@ -1,7 +1,7 @@
 # ====================================================================================== #
 # Module for pipelining calculations needed for paper.
 # 
-# Author : Eddie Lee, edlee@santafe.edu
+# Author : Eddie Lee, edlee@csh.ac.at
 # ====================================================================================== #
 import numpy as np
 from multiprocess import cpu_count
@@ -369,4 +369,162 @@ def costs_example():
     betaPlot = linspace_beta(1e-2, 1e3, 200)
     save_pickle(['dkl', 'betaRange', 'betaPlot', 'errs', 'cost'],
                  'plotting/cost_tradeoff_example.p', True)
+
+def eigen_unfitness():
+    # variety of environments to play out competition
+    tau = 10
+    scale = .2
+
+    # agent properties
+    nBatchRange = np.logspace(3, 5, 15).astype(int)
+    betaRange = lobatto_beta(30)
+
+    landscape = eigen.AgentLandscape({'tau':tau, 'h0':scale},
+                                     {'weight':.95, 'v':.01},
+                                     betaRange, nBatchRange)
+    unfitnessS, errS, stabCost = landscape.run()
+
+    landscape = eigen.AgentLandscape({'tau':tau, 'h0':scale},
+                                     {'weight':.95, 'v':-.01},
+                                     betaRange, nBatchRange)
+    unfitnessD, errD = landscape.run()[:-1]
+    
+    print('Saving cache/eigen_unfitness.p...')
+    save_pickle(['tau', 'scale', 'nBatchRange', 'betaRange',
+                'unfitnessS', 'unfitnessD', 'errS', 'errD', 'stabCost'],
+                'cache/eigen_unfitness.p', True)
+
+    betaRangePlot = linspace_beta(.1, 1000, 63)
+
+    # spline fit each row of the landscape (for fixed nBatch)
+    landscapeD = np.zeros((nBatchRange.size, betaRangePlot.size))
+    for i,(u, err) in enumerate(zip(unfitnessD, errD)):
+        landscapeD[i] = interpolate(betaRange, u, scale, errs=err)(betaRangePlot)
+        
+    landscapeS = np.zeros((nBatchRange.size, betaRangePlot.size))
+    for i,(u, err) in enumerate(zip(unfitnessS, errS)):
+        landscapeS[i] = interpolate(betaRange, u, scale, errs=err)(betaRangePlot)
+        
+    landscapeCost = np.zeros((nBatchRange.size, betaRangePlot.size))
+    for i,(s, err) in enumerate(zip(stabCost, errS)):
+        landscapeCost[i] = interpolate_cost(betaRange, s, err, scale, tau,
+                                            {'weight':.95,'v':.01})(betaRangePlot)
+
+    # combine landscapes from agent simulation and eigen solution
+    indata = pickle.load(open('cache/unfitness.p','rb'))
+    nBatchRange = append(indata['nBatchRange'][:-1], nBatchRange)
+    landscapeS = append(indata['unfitnessS'][:-1], landscapeS, axis=0)
+    landscapeCost = append(indata['stabCost'][:-1], landscapeCost, axis=0)
+    landscapeD = append(indata['unfitnessD'][:-1], landscapeD, axis=0)
+    tcRange = nBatchRange
+
+    # find optimal agent memory as we vary costs for stabilization and for memory complexity
+    # at optimal memory, compute total divergence
+    chiRange = np.logspace(-3, 0, 50)
+    muRange = np.logspace(-3, 0, 50)
+    chiGrid, muGrid = np.meshgrid(chiRange, muRange)
+
+    # for fixed sensory precision!
+    beta = .1
+    nbIx = 10
+    optDivergS = np.zeros_like(chiGrid)
+    optDivergD = np.zeros_like(chiGrid)
+    for i, mu in enumerate(muRange):
+        for j, chi in enumerate(chiRange):
+            optDivergS[i,j] = (landscapeS[nbIx] +
+                               chi * landscapeCost[nbIx] +
+                               mu * costGrid1[nbIx] +
+                               beta * costGrid2[nbIx]).min()
+            optDivergD[i,j] = (landscapeD[nbIx] +
+                               mu * costGrid1[nbIx] +
+                               beta * costGrid2[nbIx]).min()
+
+    save_pickle(['optDivergD', 'optDivergS', 'chiRange', 'muRange'],
+                'plotting/competition.p', True)
+    print('Saving plotting/competition.p...')
+
+def chebyshev_convergence():
+    tau = 10  # time scale for flipping external field
+    h0 = .2  # magnitude of external field
+    nBatch = 1_000  # integration timescale
+
+    # ABS solution
+    betaRange = linspace_beta(.1, 1000, 30)
+    kwargs = {'noise':{'type':'binary', 'scale':h0, 'v':.01, 'weight':.95},
+              'T':10_000_000,
+              'nBatch':nBatch}
+    kwargs['rng'] = np.random.RandomState(1)
+    kwargs['noise']['tau'] = tau
+    learner = agent.Stigmergy(**kwargs)
+
+    ldkl, lstabCost = learner.learn(betaRange,
+                                    save=False,
+                                    return_stab_cost=True)
+
+    # eigenfunction solution
+    degreeRange = [10, 20, 30]
+
+    solvers = []
+    dkl = []
+    errs = []
+    cost = []
+    for d in degreeRange:
+        betaRange = lobatto_beta(d)
+
+        # run eigenfunction method for different degree polynomials
+        solver = eigen.Stigmergy(tau, h0, 0, nBatch, v=.01, weight=.95, L=.5)
+
+        # check that external conditioning still sums to the full solution
+        output = solver.dkl(betaRange, iprint=False)
+        
+        solvers.append(solver)
+        dkl.append(output[0])
+        errs.append(output[1])
+        cost.append(output[2])
+
+    save_pickle(['degreeRange','ldkl','lstabCost',
+                 'dkl','errs','cost','h0','tau'],
+                'plotting/chebyshev_convergence.p')
+
+def vision_agent_landscape():
+    with open('cache/vision_agent_landscape.p', 'rb') as f:
+        data = pickle.load(f)
+    learners = data['learners']
+    scaleRange = data['scaleRange']
+    nBatchRange = data['nBatchRange']
+    betaRange = data['betaRange']
+    tau = data['tau']
+    seed = data['seed']
+    T = data['T']
+    dkl = data['dkl']
+
+    leftGrid = np.zeros((nBatchRange.size, scaleRange.size))  # diff from left hand limit
+    rightGrid = np.zeros((nBatchRange.size, scaleRange.size))
+    optunfitness = np.zeros((nBatchRange.size, scaleRange.size))
+    for j, scale in enumerate(scaleRange):
+        for i, nBatch in enumerate(nBatchRange):
+            leftGrid[i,j] = (dkl[(scale,nBatch)][0] - dkl[(scale, nBatch)].min()) / np.log(2)
+            rightGrid[i,j] = (1 + pplus(scale) * np.log2(pplus(scale)) +
+                              pminus(scale) * np.log2(pminus(scale)) +
+                              dkl[(scale, nBatch)].min() / np.log(2))
+            optunfitness[i,j] = dkl[(scale,nBatch)].min() / np.log(2)
+
+    optimalMemGrid = np.zeros((nBatchRange.size, scaleRange.size)) 
+    for j, scale in enumerate(scaleRange):
+        for i, nBatch in enumerate(nBatchRange):
+            optimalMemGrid[i,j] = -1/np.log(betaRange[np.argmin(dkl[(scale,nBatch)])])
+
+    save_pickle(['scaleRange', 'nBatchRange', 'leftGrid', 'rightGrid', 'optimalMemGrid', 'optunfitness'],
+                'plotting/vision_benefits.p', True)
+
+if __name__=='__main__':
+    chebyshev_convergence()
+    costs_example()
+    eigen_unfitness()
+    effective_timescales_stabilizer()
+    effective_timescales_destabilizer()
+    info_gain()
+    tau_range()
+    tau_range_eigen()
+    vision_agent_landscape()
 

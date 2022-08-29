@@ -2,7 +2,7 @@
 # Module for learning agent based algorithms comparing passive and active adaptation. We
 # simulate learnings agents over the course of some lifetime to sample their behavior.
 # 
-# Author : Eddie Lee, edlee@santafe.edu
+# Author : Eddie Lee, edlee@csh.ac.at
 # ====================================================================================== #
 from copy import deepcopy
 from numba.typed import Dict
