@@ -12,7 +12,7 @@ from threadpoolctl import threadpool_limits
 
 
 
-class Vision():
+class Passive():
     """Eigenvalue formulation for binary (h0, -h0) environment state.
 
     For divergence landscape, use .dkl() to calculate divergence as a function of memory
@@ -483,13 +483,12 @@ class Vision():
 
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
         return solvedDkl 
-Passive = Vision  # alias
-#end Vision
+#end Passive
 
 
 
-class Stigmergy(Vision):
-    """Eigenvalue formulation for binary (h0, -h0) environment state. See Vision class for
+class Active(Passive):
+    """Eigenvalue formulation for binary (h0, -h0) environment state. See Passive class for
     more details.
 
     Note that parameter v in the code is given as v^2 in the paper and that it carries the
@@ -762,7 +761,7 @@ class Stigmergy(Vision):
         #return part1 + part2
 
         return (phat[selectix].dot(termToAvg) + phat[nselectix].dot(ntermToAvg)) / phat.sum()
-#end Stigmergy
+#end Active
 
 
     
@@ -793,7 +792,7 @@ class Landscape():
         """Put every combination of scale, nbatch, and beta on a separate thread. Though
         this will be expensive in terms of the time to start up each thread, it will not
         have to wait for long recursions to finish before starting on a new instance of
-        Stigmergy.
+        Active.
 
         Parameters
         ----------
@@ -819,7 +818,7 @@ class Landscape():
             # must be careful to maintain small enough spacing for accurate computation
             # note that we do not go beyond h0=1 for standard sims and following
             # parameters suffice
-            solver = Stigmergy(tau, scale, 0, nbatch,
+            solver = Active(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
@@ -926,7 +925,7 @@ class AgentLandscape():
             # must be careful to maintain small enough spacing for accurate computation
             # note that we do not go beyond h0=1 for standard sims and following
             # parameters suffice
-            solver = Stigmergy(tau, scale, 0, nbatch,
+            solver = Active(tau, scale, 0, nbatch,
                                L=max(.5,scale*2.5),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)

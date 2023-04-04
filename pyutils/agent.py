@@ -14,7 +14,7 @@ from threadpoolctl import threadpool_limits
 from .utils import *
 
 
-class Vision():
+class Passive():
     """Learn the probability distribution of a sequence of coin flips that
     evolves according to Brownian spring (or Ornstein-Ulhenbeck process).
     
@@ -228,11 +228,11 @@ class Vision():
                                     pminus(self.h[t]) * (np.log(pminus(self.h[t])) - np.log(pminus(hhat[t])))])
 
         return hhat, H, dkl
-#end Vision
+#end Passive
 
 @njit
 def jit_learn_vision(seed, T, h, nBatch, beta):
-    """Jit version of Vision._learn().
+    """Jit version of Passive._learn().
     """
 
     if seed!=-1:
@@ -277,7 +277,7 @@ def jit_learn_vision(seed, T, h, nBatch, beta):
 
 
 
-class Stigmergy(Vision):
+class Active(Passive):
     """Learn the probability distribution of a sequence of coin flips that
     evolves according to Brownian spring (or Ornstein-Ulhenbeck process) with
     feedback from action loop that depletes information in the environment. 
@@ -570,12 +570,12 @@ class Stigmergy(Vision):
                 dkl[t] = np.nansum([pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t]))),
                                     pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
         return h, hhat, H, dkl
-#end Stigmergy
+#end Active
 
 
 @njit
 def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
-    """Jit version of Stigmergy._learn().
+    """Jit version of Active._learn().
     """
 
     if seed!=-1:

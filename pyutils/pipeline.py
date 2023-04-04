@@ -42,7 +42,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Vision(**kwargs)
+            learner = agent.Passive(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -61,7 +61,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -80,7 +80,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
@@ -119,7 +119,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Vision(**kwargs)
+            learner = Passive(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -140,7 +140,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -161,7 +161,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -194,7 +194,7 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
 
         for tau in tauRange:
             # recursive solution
-            solvers[tau] = eigen.Vision(tau, h0, 0, nBatch, L=.5, dx=2.5e-4)
+            solvers[tau] = eigen.Passive(tau, h0, 0, nBatch, L=.5, dx=2.5e-4)
             edkl[tau], errs[tau] = solvers[tau].dkl(betaRange)
             print("Done with tau=%E."%tau)
             
@@ -209,7 +209,7 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         cost = {}
 
         for tau in tauRange:
-            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
+            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
             edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
             print("Done with tau=%E."%tau)
             
@@ -224,7 +224,7 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         cost = {}
 
         for tau in tauRange:
-            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
+            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
             edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
             print("Done with tau=%E."%tau)
             
@@ -247,7 +247,7 @@ def effective_timescales_stabilizer():
         stabilizer and passive agents."""
         
         # solve
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=.01)
+        solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
                                      dx_res_factor=8)
@@ -273,7 +273,7 @@ def effective_timescales_stabilizer():
                                             dx_res_factor=2)
 
         # what passive looks like if not accounting for new averaged time scale
-        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
+        ovsolver = eigen.Passive(tau, h0, 0, nBatch)
         ovdkl, overrs = ovsolver.dkl(betaRange,
                                      dx_res_factor=2,
                                      iprint=False)
@@ -307,7 +307,7 @@ def effective_timescales_destabilizer():
         stabilizer and passive agents."""
         
         # solve
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=-.01)
+        solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=-.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
                                      dx_res_factor=4)
@@ -333,7 +333,7 @@ def effective_timescales_destabilizer():
                                             dx_res_factor=2)
 
         # what passive looks like if not accounting for new averaged time scale
-        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
+        ovsolver = eigen.Passive(tau, h0, 0, nBatch)
         ovdkl, overrs = ovsolver.dkl(betaRange,
                                      dx_res_factor=2,
                                      iprint=False)
@@ -357,7 +357,7 @@ def costs_example():
     degfit = 35
     betaRange = lobatto_beta(degfit)
 
-    learner = eigen.Stigmergy(100, .2, 0, 1_000, L=.5, dx=2.5e-4, weight=.95, v=.01)
+    learner = eigen.Active(100, .2, 0, 1_000, L=.5, dx=2.5e-4, weight=.95, v=.01)
     dkl, errs, cost = learner.dkl(betaRange)
 
     betaPlot = linspace_beta(1e-2, 1e3, 200)
@@ -449,7 +449,7 @@ def chebyshev_convergence():
               'nBatch':nBatch}
     kwargs['rng'] = np.random.RandomState(1)
     kwargs['noise']['tau'] = tau
-    learner = agent.Stigmergy(**kwargs)
+    learner = agent.Active(**kwargs)
 
     ldkl, lstabCost = learner.learn(betaRange,
                                     save=False,
@@ -466,7 +466,7 @@ def chebyshev_convergence():
         betaRange = lobatto_beta(d)
 
         # run eigenfunction method for different degree polynomials
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, v=.01, weight=.95, L=.5)
+        solver = eigen.Active(tau, h0, 0, nBatch, v=.01, weight=.95, L=.5)
 
         # check that external conditioning still sums to the full solution
         output = solver.dkl(betaRange, iprint=False)
