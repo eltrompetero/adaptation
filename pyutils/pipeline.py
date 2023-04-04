@@ -25,7 +25,6 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     run_stabilizer : bool, True
     run_destabilizer : bool, True
     """
-
     seed = SEED
     
     # shared properties
@@ -99,7 +98,6 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     run_stabilizer : bool, True
     run_destabilizer : bool, True
     """
-
     seed = SEED
 
     scaleRange = np.linspace(.01, 1, 20)
@@ -182,7 +180,6 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
     run_destabilizer : bool, True
     run_stabilizer : bool, True
     """
-
     tauRange = np.logspace(0, 5, 13)  # time scale for flipping external field
     h0 = .2  # magnitude of external field
     nBatch = 1_000
@@ -238,10 +235,9 @@ def effective_timescales_stabilizer():
     """Comparing divergence profiles for stabilizer with passive agent at 
     effective timescales.
     """
-    
     # set agent/env properties
-    h0 = .2
-    nBatch = 1_000
+    h0 = .2  # external env bias
+    nBatch = 1_000  # agent sample precision
 
     # specify range to solve for
     betaRange = lobatto_beta(55)
@@ -299,7 +295,6 @@ def effective_timescales_destabilizer():
     """Comparing divergence profiles for stabilizer with passive agent at 
     effective timescales.
     """
-    
     # set agent/env properties
     h0 = .2
     nBatch = 1_000
@@ -359,7 +354,6 @@ def effective_timescales_destabilizer():
 def costs_example():
     """Example of divergence landscape with algorithmic costs.
     """
-
     degfit = 35
     betaRange = lobatto_beta(degfit)
 
