@@ -334,9 +334,13 @@ def effective_timescales_stabilizer(iprint=True):
     save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
                 'cache/effective_timescales_stabilizer.p', True)
 
-def effective_timescales_destabilizer():
+def effective_timescales_destabilizer(iprint=True):
     """Comparing divergence profiles for stabilizer with passive agent at 
     effective timescales.
+    
+    Parameters
+    ----------
+    iprint : bool, True
     """
     # set agent/env properties
     h0 = .2
@@ -353,7 +357,7 @@ def effective_timescales_destabilizer():
         solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=-.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
-                                     dx_res_factor=4)
+                                     dx_res_factor=8)
 
         # average decay rate once having accounted for stabilization
         meanTau = np.zeros_like(betaRange)
@@ -389,7 +393,7 @@ def effective_timescales_destabilizer():
     ovdkl = {}
     for tau in tauRange:
         dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
-        print(f"Done with {tau}.")
+        if iprint: print(f"Done with {tau}.")
         
     save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
                 'cache/effective_timescales_destabilizer.p', True)

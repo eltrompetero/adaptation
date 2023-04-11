@@ -9,6 +9,7 @@ from numba import types
 from warnings import warn
 import multiprocess as mp
 from threadpoolctl import threadpool_limits
+from scipy.sparse import csr_matrix
 
 
 
@@ -19,7 +20,7 @@ class Passive():
     weighting term beta.
     """
     def __init__(self, tau, h0, beta, nBatch,
-                 L=.5, dx=None, **kwargs):
+                 L=.5, dx=None, zero_threshold=1e-20, **kwargs):
         """
         Parameters
         ----------
@@ -35,6 +36,9 @@ class Passive():
             Max positive value of lattice. Domain spans [-L, L].
         dx : float, None
             Spacing of points on lattice spreading out from x=0.
+        zero_threshold : float, 1e-20
+            Value below which entries of convolution matrix are set to 0. This is
+            then used to determine the size of the resulting sparse matrix.
         **kwargs
         """
         # check input args
@@ -65,7 +69,7 @@ class Passive():
         s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
         self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
                                                        np.sqrt(2 * np.pi) / sigma)
-        self.M = np.ones(x.size) * dx  # integration operator
+        self.M = np.ones(x.size) * dx  # integration operator; in this way spacing can be arbitrary
         self.M[0] /= 2
         self.M[-1] /= 2
         self.trapz_row = lambda mat, M=self.M : mat.dot(M)
@@ -73,9 +77,16 @@ class Passive():
         dhhat = (x[:,None] - x[None,:]*beta) / (1-beta)  # what would delta hhat be given the change to hhat
         eps = (np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field relative to h0
         self.staycoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
+        # apply sparseness threshold
+        self.staycoeff[self.staycoeff<zero_threshold] = 0
+        self.staycoeff = csr_matrix(self.staycoeff)
+
         eps = (-np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field relative to -h0
         self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
-        
+        # apply sparseness threshold
+        self.leavecoeff[self.leavecoeff<zero_threshold] = 0
+        self.leavecoeff = csr_matrix(self.leavecoeff)
+
         # basic precision checks (for one's sanity)
         assert np.isclose(self.eps_gaussian(x).dot(self.M), 1), (h0, beta, nBatch, L, dx)
         assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
@@ -87,11 +98,11 @@ class Passive():
         
     def stay(self, phat):
         """Transformation of density given that external field stays the same."""
-        return self.trapz_row(phat[None,:] * self.staycoeff) / (1-self.beta)
+        return self.trapz_row(self.staycoeff.multiply(phat[None,:])) / (1-self.beta)
 
     def leave(self, phat):
         """Transformation of density given that external field flips in sign."""
-        return self.trapz_row(phat[None,:] * self.leavecoeff) / (1-self.beta)
+        return self.trapz_row(self.leavecoeff.multiply(phat[None,:])) / (1-self.beta)
 
     def apply_transform(self,
                         phat,
@@ -503,11 +514,11 @@ class Active(Passive):
             
         # term will be multiplied by 1-1/tau
         if self.tau==1:  # for dissipators tau<1 means the environment changes for sure
-            self.staycoeff *= stayprob
+            self.staycoeff = self.staycoeff.multiply(stayprob)
         else:
-            self.staycoeff *= stayprob / (1 - 1/self.tau)
+            self.staycoeff = self.staycoeff.multiply(stayprob / (1 - 1/self.tau))
         # term will be multiplied by 1/tau
-        self.leavecoeff *= (1 - stayprob) * self.tau
+        self.leavecoeff = self.leavecoeff.multiply((1 - stayprob) * self.tau)
 
     def apply_transform_cond_external(self, phat):
         """Imagine starting a system with equal probability on h0 and -h0. Then, one
