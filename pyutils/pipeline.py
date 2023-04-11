@@ -231,26 +231,36 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
         save_pickle(varlist, 'cache/eigen_stabilizer_tau_range.p', True)
 
-def effective_timescales_stabilizer():
+def effective_timescales_stabilizer(iprint=True):
     """Comparing divergence profiles for stabilizer with passive agent at 
-    effective timescales.
+    effective timescales. Save to pickle.
+
+    Parameters
+    ----------
+    iprint : bool, True
     """
     # set agent/env properties
     h0 = .2  # external env bias
     nBatch = 1_000  # agent sample precision
 
-    # specify range to solve for
+    # specify agent memory values to solve for
     betaRange = lobatto_beta(55)
+
+    def custom_dx_res_multiplier(tau):
+        if tau==250:
+            return 2
+        if tau==1250:
+            return 4
+        return 1
     
     def loop_wrapper(tau):
         """Inner function to run eigenfunction solution procedure on 
-        stabilizer and passive agents."""
-        
-        # solve
+        stabilizer and passive agents for a given value of agent memory tau."""
+        # solve for active agent DKL
         solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
-                                     dx_res_factor=8)
+                                     dx_res_factor=8*custom_dx_res_multiplier(tau))
 
         # average decay rate once having accounted for stabilization
         meanTau = np.zeros_like(betaRange)
@@ -262,7 +272,9 @@ def effective_timescales_stabilizer():
             # meanTau[i] = 1/(1 - trapz(solver.binary_env_stay_p(x-h0) * p, x))
             meanTau[i] = 1/(1 - solver.binary_env_stay_p(x-h0).dot(p/p.sum()))
         
-        # passive agent shifted to new effective timescale
+        # passive agent shifted to new effective timescale; this is calculated from the
+        # averaged effective timescale from the active agent solution to the distribution
+        # of estimated bias
         vdkl = np.zeros_like(betaRange)
         verrs = np.zeros_like(betaRange)
 
@@ -270,7 +282,7 @@ def effective_timescales_stabilizer():
             vsolver = eigen.Passive(meanTau[i], h0, 0, nBatch)
             vdkl[i], verrs[i] = vsolver.dkl(np.array([betaRange[i]]),
                                             iprint=False,
-                                            dx_res_factor=2)
+                                            dx_res_factor=2*custom_dx_res_multiplier(tau))
 
         # what passive looks like if not accounting for new averaged time scale
         ovsolver = eigen.Passive(tau, h0, 0, nBatch)
@@ -286,7 +298,7 @@ def effective_timescales_stabilizer():
     ovdkl = {}
     for tau in tauRange:
         dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
-        print(f"Done with {tau}.")
+        if iprint: print(f"Done with {tau}.")
         
     save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
                 'cache/effective_timescales_stabilizer.p', True)

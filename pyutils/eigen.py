@@ -499,7 +499,6 @@ class Active(Passive):
         """For destabilizers v<0 and for stabilizers v>0 (which is more intuitive but the
         negative of the specification in the paper).
         """
-
         self.v = v
         self.weight = weight
         
@@ -536,7 +535,6 @@ class Active(Passive):
         ndarray
         ndarray
         """
-        
         phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
@@ -563,7 +561,6 @@ class Active(Passive):
         -------
         ndarray
         """
-        
         stay = self.binary_env_stay_p(self.x-self.h0)
         
         term1 = np.log(1/(1-stay) / self.tau) / self.tau 
@@ -606,7 +603,6 @@ class Active(Passive):
         ndarray
             Time-averaged stability cost.
         """
-        
         if not hasattr(recurse, '__len__'):
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
@@ -689,7 +685,6 @@ class Active(Passive):
         float or ndarray
             Stay probability. Decay probability is 1 minus this.
         """
-        
         if self.v<0:
             v = -self.v
             weight = -self.weight
@@ -720,7 +715,6 @@ class Active(Passive):
         ndarray
             Desired moment of tilde taue.
         """
-        
         assert order>=1
         order = float(order)
 
@@ -764,7 +758,7 @@ class Active(Passive):
 #end Active
 
 
-    
+
 class Landscape():
     def __init__(self, env_prop, agent_prop, beta_range, scale_range, nbatch_range):
         """

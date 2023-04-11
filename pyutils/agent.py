@@ -59,7 +59,6 @@ class Passive():
             time.
         rng : np.random.RandomState, None
         """
-        
         assert nBatch>=1 and T>0
         self.nBatch = nBatch
         self.T = T
