@@ -43,12 +43,12 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
             learner = agent.Passive(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
-                    'cache/vision_agent_sim_tau_range.p', True)
+                    'cache/passive_agent_sim_tau_range.p', True)
 
     # destabilizer
     if run_destabilizer:
@@ -62,7 +62,7 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
             learner = agent.Active(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
@@ -81,12 +81,43 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
             learner = agent.Active(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/stabilizer_agent_sim_tau_range.p', True)
+
+def tau_range_asym():
+    """Agent unfitness landscape for environments as a function of timescale. Using
+    ABS and for asymmetric environment biases.
+
+    Parameters
+    ----------
+    """
+    seed = SEED
+    
+    # shared properties
+    betaRange = linspace_beta(1e-1, 1e3, 100)
+    tauRange = np.logspace(0, 5, 13)
+
+    # passive
+    kwargs = {'noise':{'type':'binary_asym', 'values':(.15, -.3)},
+              'T':10_000_000,
+              'nBatch':1_000}
+    learners = []
+    dkl = {}
+
+    for tau in tauRange:
+        kwargs['rng'] = np.random.RandomState(seed)
+        kwargs['noise']['tau'] = tau
+        learner = agent.Passive(**kwargs)
+        dkl[tau] = learner.learn(betaRange, save=False)
+        learners.append(learner)
+        print("Done with tau=%1.1E."%tau)
+
+    save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
+                'cache/passive_asym_agent_sim_tau_range.p', True)
 
 def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     """Landscapes for optimal memory and memory/forgetting tradeoff. From "info
@@ -126,7 +157,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         print("Saving passive simulation.")
         print()
         save_pickle(['learners', 'scaleRange', 'nBatchRange', 'betaRange', 'tau', 'seed', 'T', 'dkl'],
-                    'cache/vision_agent_landscape.p', True)
+                    'cache/passive_agent_landscape.p', True)
     
     # stabilizer
     if run_stabilizer:
@@ -492,8 +523,8 @@ def chebyshev_convergence():
                  'dkl','errs','cost','h0','tau'],
                 'plotting/chebyshev_convergence.p')
 
-def vision_agent_landscape():
-    with open('cache/vision_agent_landscape.p', 'rb') as f:
+def passive_agent_landscape():
+    with open('cache/passive_agent_landscape.p', 'rb') as f:
         data = pickle.load(f)
     learners = data['learners']
     scaleRange = data['scaleRange']
@@ -521,7 +552,36 @@ def vision_agent_landscape():
             optimalMemGrid[i,j] = -1/np.log(betaRange[np.argmin(dkl[(scale,nBatch)])])
 
     save_pickle(['scaleRange', 'nBatchRange', 'leftGrid', 'rightGrid', 'optimalMemGrid', 'optunfitness'],
-                'plotting/vision_benefits.p', True)
+                'plotting/passive_benefits.p', True)
+
+def abs_examples(learner_type='passive'):
+    """Example ABS simulations for comparison of accuracy with eigenfunction method.
+
+    Parameters
+    ----------
+    learner_type : str, 'passive'
+        'passive' or 'active'
+    """
+    beta_range = np.array([0, 1/9, 2/9, 3/9, 4/9, 5/9, 6/9, 7/9, 8/9])
+    tau = 20
+    if learner_type=='passive':
+        kwargs = {'noise':{'type':'binary', 'tau':tau, 'scale': .2},
+                  'T':1_000_000,
+                  'nBatch':10_000}
+        learner = agent.Passive(**kwargs)
+    elif learner_type=='active':
+        kwargs = {'noise':{'type':'binary', 'tau':tau, 'scale': .2, 'v':.01, 'weight':.95},
+                  'T':1_000_000,
+                  'nBatch':10_000}
+        learner = agent.Active(**kwargs)
+    else:
+        raise Exception("Unrecognized learner type.")
+    learner.learn(beta_range)
+
+    if learner_type=='active':
+        save_pickle(['learner'], 'cache/abs_active_example_tau=%d.p'%kwargs['noise']['tau'], True)
+    else:
+        save_pickle(['learner'], 'cache/abs_passive_example_tau=%d.p'%kwargs['noise']['tau'], True)
 
 if __name__=='__main__':
     chebyshev_convergence()
@@ -532,5 +592,6 @@ if __name__=='__main__':
     info_gain()
     tau_range()
     tau_range_eigen()
-    vision_agent_landscape()
-
+    passive_agent_landscape()
+    abs_examples()
+    abs_examples('active')

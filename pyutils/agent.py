@@ -32,10 +32,11 @@ class Passive():
         noise : dict
             Noise to consider.
 
-            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck or
-            'binary'.
+            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck,
+            'binary', 'binary_asym'. For each type, you must also give a dict of
+            parameters as specified below.
 
-            For OU:
+            For 'OU':
                 dragh : float, .01
                     Coeff on linear force pulling h back to 0, inverse time.
                 sigmah : float, 1 
@@ -43,11 +44,19 @@ class Passive():
                     environmental noise per batch step, or rate fluctuations.
                     This also determines the absolute timescale where unit steps
                     in time are when sigmah=1.
-            For binary:
+            For 'binary':
                 tau : float
                     Decorrelation time for exponential distribution.
                 scale : float
-                    Magnitude for binary values of fields.
+                    Magnitude for binary values of fields with the assumption that
+                    the values are symmetric, i.e. environmental bias only switches
+                    between the values of scale and -scale.
+            For 'binary_asym':
+                tau : float
+                    Decorrelation time for exponential distribution.
+                values : twople
+                    Magnitude for binary values of fields between which to switch.
+                    Permits arbitrary values.
         nBatch : int, 20
             Number of samples on which the cells learn. Effectively, the time
             scale for cell learning.
@@ -100,6 +109,22 @@ class Passive():
             #    h[t:t+dt] = hscale
             #    t += dt
             self.hscale = hscale
+
+        elif noise['type']=='binary_asym':
+            tau = noise['tau']  # decorrelation time
+            hscale = noise['values']  # magnitude of biasing fields
+
+            h[0] = hscale[0]
+            for t in range(1, T):
+                if self.rng.rand()<(1/tau):
+                    # switch bias
+                    if h[t-1]==hscale[0]:
+                        h[t] = hscale[1]
+                    else:
+                        h[t] = hscale[0]
+                else:
+                    # maintain same bias
+                    h[t] = h[t-1]
         else:
             raise Exception("Unrecognized noise type.")
         
@@ -121,6 +146,8 @@ class Passive():
             for the feedback loop.
         n_cpus : int, None
         save : bool, True
+            Store time trajectories of simulation in instance. This can take up a
+            huge amount of memory, so good to turn to False when unneeded.
         use_other_dkl : bool, False
             Default is to measure probability distribution of h instead of hhat.
             Note that using hhat as probability distribution can lead to
@@ -132,7 +159,6 @@ class Passive():
             Averaged Kullback-Leibler divergence per given value of beta. Full
             simulation results are saved in self.dkl.
         """
-
         if beta_range is None:
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
@@ -146,7 +172,7 @@ class Passive():
             def loop_wrapper(beta):
                 self.update_beta(beta)
                 #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
-                return jit_learn_vision(seed,
+                return jit_learn_passive(seed,
                                         self.T,
                                         self.h,
                                         self.nBatch,
@@ -166,7 +192,7 @@ class Passive():
             def loop_wrapper(beta):
                 self.update_beta(beta)
                 #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
-                return jit_learn_vision(seed,
+                return jit_learn_passive(seed,
                                         self.T,
                                         self.h,
                                         self.nBatch,
@@ -230,7 +256,7 @@ class Passive():
 #end Passive
 
 @njit
-def jit_learn_vision(seed, T, h, nBatch, beta):
+def jit_learn_passive(seed, T, h, nBatch, beta):
     """Jit version of Passive._learn().
     """
 
@@ -384,7 +410,7 @@ class Active(Passive):
                 #h[beta], hhat[beta], H[beta], dkl[beta] = self._learn()
                 # call fast jit version
                 if self.noise['type']=='ou':
-                    return jit_learn_stigmergy(seed, self.T, self.u, self.v,
+                    return jit_learn_active(seed, self.T, self.u, self.v,
                                                self.dragh, self.dh,
                                                self.nBatch, self.beta, self.alpha)
                 else:
@@ -398,13 +424,13 @@ class Active(Passive):
                         jitnoise[k] = v
 
                     if typ=='binary ant':
-                        return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                        return jit_learn_active_binary_noise_ant(seed, self.T,
                                                                     jitnoise,
                                                                     self.nBatch,
                                                                     self.beta)
                
                     else:
-                        return jit_learn_stigmergy_binary_noise(seed, self.T,
+                        return jit_learn_active_binary_noise(seed, self.T,
                                                                 jitnoise,
                                                                 self.nBatch,
                                                                 self.beta)
@@ -438,7 +464,7 @@ class Active(Passive):
                 # call fast jit version
                 if self.noise['type']=='ou':
                     raise NotImplementedError
-                    return jit_learn_stigmergy(seed, self.T, self.u, self.v,
+                    return jit_learn_active(seed, self.T, self.u, self.v,
                                                self.dragh, self.dh,
                                                self.nBatch, self.beta, self.alpha)
                 else:
@@ -452,13 +478,13 @@ class Active(Passive):
                         jitnoise[k] = v
                     
                     if typ=='binary ant':
-                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                        h, hhat, H, dkl = jit_learn_active_binary_noise_ant(seed, self.T,
                                                                                jitnoise,
                                                                                self.nBatch,
                                                                                self.beta)
                         return dkl
                     else:
-                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise(seed, self.T,
+                        h, hhat, H, dkl = jit_learn_active_binary_noise(seed, self.T,
                                                                            jitnoise,
                                                                            self.nBatch,
                                                                            self.beta)
@@ -573,7 +599,7 @@ class Active(Passive):
 
 
 @njit
-def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
+def jit_learn_active(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
     """Jit version of Active._learn().
     """
 
@@ -625,7 +651,7 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
     return h, hhat, H, dkl
 
 @njit
-def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
+def jit_learn_active_binary_noise(seed, T, noise, nBatch, beta):
     if seed!=-1:
         np.random.seed(seed)
     
@@ -685,7 +711,7 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
     return h, hhat, H, dkl
 
 @njit
-def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
+def jit_learn_active_binary_noise_ant(seed, T, noise, nBatch, beta):
     if seed!=-1:
         np.random.seed(seed)
     

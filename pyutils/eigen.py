@@ -37,7 +37,6 @@ class Passive():
             Spacing of points on lattice spreading out from x=0.
         **kwargs
         """
-        
         # check input args
         assert tau>=1
         assert 0 <= h0 < L
@@ -112,7 +111,6 @@ class Passive():
         -------
         ndarray
         """
-
         assert recurse>=0
         assert recurse%(recurse_skip+1)==0
 
@@ -168,6 +166,7 @@ class Passive():
             Number of first order approximations to run to get an approximate starting form.
         tol : float, 1e-5
         tmax : int, 30
+            Max number of iterations to run.
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
@@ -181,7 +180,6 @@ class Passive():
         int
             Error flag.
         """
-
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
         # sanity check for normalization
@@ -202,7 +200,8 @@ class Passive():
         else:
             assert phat0.size==newphat.size
             newphat = phat0
-
+        
+        # iterate to convergence or til max number of iters allowed
         while counter<=tmax and err>tol:
             phat = newphat
             newphat = self.apply_transform(phat, recursion_depth, **transform_kw)
@@ -257,7 +256,6 @@ class Passive():
         ndarray
         ndarray
         """
-        
         phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
@@ -307,7 +305,6 @@ class Passive():
             Eigenvalue solution error (change in functional form after repeated
             iteration).
         """
- 
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
 
@@ -420,7 +417,6 @@ class Passive():
             Array of errors for each point. First col is iteration error, second col is
             recursion error.
         """
-        
         if not hasattr(recurse, '__len__'):
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
