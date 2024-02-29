@@ -171,15 +171,16 @@ class Passive():
         if save:
             def loop_wrapper(beta):
                 self.update_beta(beta)
-                #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
+                assert not hasattr(beta, '__len__')  # from new numba bug
                 return jit_learn_passive(seed,
-                                        self.T,
-                                        self.h,
-                                        self.nBatch,
-                                        self.beta)
+                                         self.T,
+                                         self.h,
+                                         self.nBatch,
+                                         self.beta)
             
             if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
+                    loop_wrapper(beta_range[0])
                     hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                     hhat = dict(zip(beta_range, hhat_))
                     H = dict(zip(beta_range, H_))
@@ -193,10 +194,10 @@ class Passive():
                 self.update_beta(beta)
                 #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
                 return jit_learn_passive(seed,
-                                        self.T,
-                                        self.h,
-                                        self.nBatch,
-                                        self.beta)[-1]
+                                         self.T,
+                                         self.h,
+                                         self.nBatch,
+                                         self.beta)[-1]
             
             if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
@@ -259,13 +260,13 @@ class Passive():
 def jit_learn_passive(seed, T, h, nBatch, beta):
     """Jit version of Passive._learn().
     """
-
     if seed!=-1:
         np.random.seed(seed)
     
     hhat = np.zeros(T)
     H = np.zeros(T)
     dkl = np.zeros(T)
+    Xmu = 0.
 
     for t in range(T):
         # simulate coin flip using environmental field
@@ -297,7 +298,6 @@ def jit_learn_passive(seed, T, h, nBatch, beta):
             dkl[t] += term1
         if not np.isnan(term2):
             dkl[t] += term2
-    
     return hhat, H, dkl
 
 

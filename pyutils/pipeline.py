@@ -4,7 +4,7 @@
 # Author : Eddie Lee, edlee@csh.ac.at
 # ====================================================================================== #
 import numpy as np
-from multiprocess import cpu_count
+from multiprocess import cpu_count, Pool
 from workspace.utils import save_pickle
 from itertools import product
 
@@ -586,6 +586,30 @@ def abs_examples(learner_type='passive'):
         save_pickle(['learner'], 'cache/abs_active_example_tau=%d.p'%kwargs['noise']['tau'], True)
     else:
         save_pickle(['learner'], 'cache/abs_passive_example_tau=%d.p'%kwargs['noise']['tau'], True)
+
+def kalman():
+    from .kalman import KalmanSim, KalmanFilter
+
+    invL_range = np.logspace(-9, 2, 30)
+    p_range = np.logspace(-7, -1, 7)[::-1]
+    gain = []
+    div = []
+
+    def loop_wrapper(args):
+        sim, invL = args
+        predx, correctx = sim.learn(invL)
+        return sim.kf.gain(), sim.div(correctx).mean()
+
+    with Pool() as pool:
+        for p in p_range:
+            sim = KalmanSim(0, p, 2, int(1e8))
+            gain_, div_ = list(zip(*pool.map(loop_wrapper, [(sim, invL) for invL in invL_range])))
+            gain.append(gain_)
+            div.append(div_)
+            print(f"Done with {np.log10(p):.2f}.")
+    div = np.array(div)
+    gain = np.array(gain)
+    save_pickle(['invL_range','p_range','div','gain'], 'cache/kalman_ex.p', True)
 
 if __name__=='__main__':
     chebyshev_convergence()
