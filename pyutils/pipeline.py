@@ -4,7 +4,7 @@
 # Author : Eddie Lee, edlee@csh.ac.at
 # ====================================================================================== #
 import numpy as np
-from multiprocess import cpu_count
+from multiprocess import cpu_count, Pool
 from workspace.utils import save_pickle
 from itertools import product
 
@@ -42,13 +42,13 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Vision(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            learner = agent.Passive(**kwargs)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
-                    'cache/vision_agent_sim_tau_range.p', True)
+                    'cache/passive_agent_sim_tau_range.p', True)
 
     # destabilizer
     if run_destabilizer:
@@ -61,8 +61,8 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            learner = agent.Active(**kwargs)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
@@ -80,13 +80,44 @@ def tau_range(run_passive=True, run_stabilizer=True, run_destabilizer=True):
         for tau in tauRange:
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
-            dkl[tau] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
+            learner = agent.Active(**kwargs)
+            dkl[tau] = learner.learn(betaRange, save=False)
             learners.append(learner)
             print("Done with tau=%1.1E."%tau)
 
         save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
                     'cache/stabilizer_agent_sim_tau_range.p', True)
+
+def tau_range_asym():
+    """Agent unfitness landscape for environments as a function of timescale. Using
+    ABS and for asymmetric environment biases.
+
+    Parameters
+    ----------
+    """
+    seed = SEED
+    
+    # shared properties
+    betaRange = linspace_beta(1e-1, 1e3, 100)
+    tauRange = np.logspace(0, 5, 13)
+
+    # passive
+    kwargs = {'noise':{'type':'binary_asym', 'values':(.15, -.3)},
+              'T':10_000_000,
+              'nBatch':1_000}
+    learners = []
+    dkl = {}
+
+    for tau in tauRange:
+        kwargs['rng'] = np.random.RandomState(seed)
+        kwargs['noise']['tau'] = tau
+        learner = agent.Passive(**kwargs)
+        dkl[tau] = learner.learn(betaRange, save=False)
+        learners.append(learner)
+        print("Done with tau=%1.1E."%tau)
+
+    save_pickle(['learners', 'betaRange', 'tauRange', 'seed', 'kwargs', 'dkl'],
+                'cache/passive_asym_agent_sim_tau_range.p', True)
 
 def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
     """Landscapes for optimal memory and memory/forgetting tradeoff. From "info
@@ -119,14 +150,14 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = Vision(**kwargs)
+            learner = Passive(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
         print("Saving passive simulation.")
         print()
         save_pickle(['learners', 'scaleRange', 'nBatchRange', 'betaRange', 'tau', 'seed', 'T', 'dkl'],
-                    'cache/vision_agent_landscape.p', True)
+                    'cache/passive_agent_landscape.p', True)
     
     # stabilizer
     if run_stabilizer:
@@ -140,7 +171,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -161,7 +192,7 @@ def info_gain(run_passive=True, run_stabilizer=True, run_destabilizer=True):
 
             kwargs['rng'] = np.random.RandomState(seed)
             kwargs['noise']['tau'] = tau
-            learner = agent.Stigmergy(**kwargs)
+            learner = agent.Active(**kwargs)
             dkl[(scale, nBatch)] = learner.learn(betaRange, n_cpus=cpu_count()-1, save=False)
             learners[(scale, nBatch)] = learner
 
@@ -194,7 +225,7 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
 
         for tau in tauRange:
             # recursive solution
-            solvers[tau] = eigen.Vision(tau, h0, 0, nBatch, L=.5, dx=2.5e-4)
+            solvers[tau] = eigen.Passive(tau, h0, 0, nBatch, L=.5, dx=2.5e-4)
             edkl[tau], errs[tau] = solvers[tau].dkl(betaRange)
             print("Done with tau=%E."%tau)
             
@@ -209,7 +240,7 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         cost = {}
 
         for tau in tauRange:
-            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
+            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
             edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
             print("Done with tau=%E."%tau)
             
@@ -224,30 +255,106 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         cost = {}
 
         for tau in tauRange:
-            solvers[tau] = eigen.Stigmergy(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
-            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
+            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=5e-5)
+            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange, tmax=1500)
             print("Done with tau=%E."%tau)
             
         varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
         save_pickle(varlist, 'cache/eigen_stabilizer_tau_range.p', True)
 
-def effective_timescales_stabilizer():
+def effective_timescales_stabilizer(iprint=True):
     """Comparing divergence profiles for stabilizer with passive agent at 
-    effective timescales.
+    effective timescales. Save to pickle.
+
+    Parameters
+    ----------
+    iprint : bool, True
     """
     # set agent/env properties
     h0 = .2  # external env bias
     nBatch = 1_000  # agent sample precision
 
-    # specify range to solve for
+    # specify agent memory values to solve for
     betaRange = lobatto_beta(55)
+
+    def custom_dx_res_multiplier(tau):
+        if tau==250:
+            return 2
+        if tau==1250:
+            return 4
+        return 1
+    
+    def loop_wrapper(tau):
+        """Inner function to run eigenfunction solution procedure on 
+        stabilizer and passive agents for a given value of agent memory tau."""
+        # solve for active agent DKL
+        solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=.01)
+        dkl, errs, cost = solver.dkl(betaRange,
+                                     iprint=False,
+                                     dx_res_factor=8*custom_dx_res_multiplier(tau))
+
+        # average decay rate once having accounted for stabilization
+        meanTau = np.zeros_like(betaRange)
+        for i, beta in enumerate(betaRange):
+            p, _, scost, x = solver.cache_phatpos[beta]
+            # this is just like weighting each observation directly by probability
+            # assuming that we have a discrete space
+            # seems like it's missing a jacobian, but it works really well
+            # meanTau[i] = 1/(1 - trapz(solver.binary_env_stay_p(x-h0) * p, x))
+            meanTau[i] = 1/(1 - solver.binary_env_stay_p(x-h0).dot(p/p.sum()))
+        
+        # passive agent shifted to new effective timescale; this is calculated from the
+        # averaged effective timescale from the active agent solution to the distribution
+        # of estimated bias
+        vdkl = np.zeros_like(betaRange)
+        verrs = np.zeros_like(betaRange)
+
+        for i in range(betaRange.size):
+            vsolver = eigen.Passive(meanTau[i], h0, 0, nBatch)
+            vdkl[i], verrs[i] = vsolver.dkl(np.array([betaRange[i]]),
+                                            iprint=False,
+                                            dx_res_factor=2*custom_dx_res_multiplier(tau))
+
+        # what passive looks like if not accounting for new averaged time scale
+        ovsolver = eigen.Passive(tau, h0, 0, nBatch)
+        ovdkl, overrs = ovsolver.dkl(betaRange,
+                                     dx_res_factor=2,
+                                     iprint=False)
+        
+        return (dkl, errs), (vdkl, verrs), (ovdkl, overrs)
+    
+    tauRange = [10, 50, 250, 1250]
+    dkl = {}
+    vdkl = {}
+    ovdkl = {}
+    for tau in tauRange:
+        dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
+        if iprint: print(f"Done with {tau}.")
+        
+    save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
+                'cache/effective_timescales_stabilizer.p', True)
+
+def effective_timescales_destabilizer(iprint=True):
+    """Comparing divergence profiles for stabilizer with passive agent at 
+    effective timescales.
+    
+    Parameters
+    ----------
+    iprint : bool, True
+    """
+    # set agent/env properties
+    h0 = .2
+    nBatch = 1_000
+
+    # specify range to solve for
+    betaRange = lobatto_beta(45)
     
     def loop_wrapper(tau):
         """Inner function to run eigenfunction solution procedure on 
         stabilizer and passive agents."""
         
         # solve
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=.01)
+        solver = eigen.Active(tau, h0, 0, nBatch, weight=.95, v=-.01)
         dkl, errs, cost = solver.dkl(betaRange,
                                      iprint=False,
                                      dx_res_factor=8)
@@ -273,67 +380,7 @@ def effective_timescales_stabilizer():
                                             dx_res_factor=2)
 
         # what passive looks like if not accounting for new averaged time scale
-        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
-        ovdkl, overrs = ovsolver.dkl(betaRange,
-                                     dx_res_factor=2,
-                                     iprint=False)
-        
-        return (dkl, errs), (vdkl, verrs), (ovdkl, overrs)
-    
-    tauRange = [10, 50, 250, 1250]
-    dkl = {}
-    vdkl = {}
-    ovdkl = {}
-    for tau in tauRange:
-        dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
-        print(f"Done with {tau}.")
-        
-    save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
-                'cache/effective_timescales_stabilizer.p', True)
-
-def effective_timescales_destabilizer():
-    """Comparing divergence profiles for stabilizer with passive agent at 
-    effective timescales.
-    """
-    # set agent/env properties
-    h0 = .2
-    nBatch = 1_000
-
-    # specify range to solve for
-    betaRange = lobatto_beta(45)
-    
-    def loop_wrapper(tau):
-        """Inner function to run eigenfunction solution procedure on 
-        stabilizer and passive agents."""
-        
-        # solve
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, weight=.95, v=-.01)
-        dkl, errs, cost = solver.dkl(betaRange,
-                                     iprint=False,
-                                     dx_res_factor=4)
-
-        # average decay rate once having accounted for stabilization
-        meanTau = np.zeros_like(betaRange)
-        for i, beta in enumerate(betaRange):
-            p, _, scost, x = solver.cache_phatpos[beta]
-            # this is just like weighting each observation directly by probability
-            # assuming that we have a discrete space
-            # seems like it's missing a jacobian, but it works really well
-            # meanTau[i] = 1/(1 - trapz(solver.binary_env_stay_p(x-h0) * p, x))
-            meanTau[i] = 1/(1 - solver.binary_env_stay_p(x-h0).dot(p/p.sum()))
-        
-        # passive agent shifted to new effective timescale
-        vdkl = np.zeros_like(betaRange)
-        verrs = np.zeros_like(betaRange)
-
-        for i in range(betaRange.size):
-            vsolver = eigen.Passive(meanTau[i], h0, 0, nBatch)
-            vdkl[i], verrs[i] = vsolver.dkl(np.array([betaRange[i]]),
-                                            iprint=False,
-                                            dx_res_factor=2)
-
-        # what passive looks like if not accounting for new averaged time scale
-        ovsolver = eigen.Vision(tau, h0, 0, nBatch)
+        ovsolver = eigen.Passive(tau, h0, 0, nBatch)
         ovdkl, overrs = ovsolver.dkl(betaRange,
                                      dx_res_factor=2,
                                      iprint=False)
@@ -346,7 +393,7 @@ def effective_timescales_destabilizer():
     ovdkl = {}
     for tau in tauRange:
         dkl[tau], vdkl[tau], ovdkl[tau] = loop_wrapper(tau)        
-        print(f"Done with {tau}.")
+        if iprint: print(f"Done with {tau}.")
         
     save_pickle(['dkl','ovdkl','vdkl','betaRange','h0','nBatch'],
                 'cache/effective_timescales_destabilizer.p', True)
@@ -357,7 +404,7 @@ def costs_example():
     degfit = 35
     betaRange = lobatto_beta(degfit)
 
-    learner = eigen.Stigmergy(100, .2, 0, 1_000, L=.5, dx=2.5e-4, weight=.95, v=.01)
+    learner = eigen.Active(100, .2, 0, 1_000, L=.5, dx=2.5e-4, weight=.95, v=.01)
     dkl, errs, cost = learner.dkl(betaRange)
 
     betaPlot = linspace_beta(1e-2, 1e3, 200)
@@ -449,7 +496,7 @@ def chebyshev_convergence():
               'nBatch':nBatch}
     kwargs['rng'] = np.random.RandomState(1)
     kwargs['noise']['tau'] = tau
-    learner = agent.Stigmergy(**kwargs)
+    learner = agent.Active(**kwargs)
 
     ldkl, lstabCost = learner.learn(betaRange,
                                     save=False,
@@ -466,7 +513,7 @@ def chebyshev_convergence():
         betaRange = lobatto_beta(d)
 
         # run eigenfunction method for different degree polynomials
-        solver = eigen.Stigmergy(tau, h0, 0, nBatch, v=.01, weight=.95, L=.5)
+        solver = eigen.Active(tau, h0, 0, nBatch, v=.01, weight=.95, L=.5)
 
         # check that external conditioning still sums to the full solution
         output = solver.dkl(betaRange, iprint=False)
@@ -480,8 +527,8 @@ def chebyshev_convergence():
                  'dkl','errs','cost','h0','tau'],
                 'plotting/chebyshev_convergence.p')
 
-def vision_agent_landscape():
-    with open('cache/vision_agent_landscape.p', 'rb') as f:
+def passive_agent_landscape():
+    with open('cache/passive_agent_landscape.p', 'rb') as f:
         data = pickle.load(f)
     learners = data['learners']
     scaleRange = data['scaleRange']
@@ -509,7 +556,60 @@ def vision_agent_landscape():
             optimalMemGrid[i,j] = -1/np.log(betaRange[np.argmin(dkl[(scale,nBatch)])])
 
     save_pickle(['scaleRange', 'nBatchRange', 'leftGrid', 'rightGrid', 'optimalMemGrid', 'optunfitness'],
-                'plotting/vision_benefits.p', True)
+                'plotting/passive_benefits.p', True)
+
+def abs_examples(learner_type='passive'):
+    """Example ABS simulations for comparison of accuracy with eigenfunction method.
+
+    Parameters
+    ----------
+    learner_type : str, 'passive'
+        'passive' or 'active'
+    """
+    beta_range = np.array([0, 1/9, 2/9, 3/9, 4/9, 5/9, 6/9, 7/9, 8/9])
+    tau = 20
+    if learner_type=='passive':
+        kwargs = {'noise':{'type':'binary', 'tau':tau, 'scale': .2},
+                  'T':1_000_000,
+                  'nBatch':10_000}
+        learner = agent.Passive(**kwargs)
+    elif learner_type=='active':
+        kwargs = {'noise':{'type':'binary', 'tau':tau, 'scale': .2, 'v':.01, 'weight':.95},
+                  'T':1_000_000,
+                  'nBatch':10_000}
+        learner = agent.Active(**kwargs)
+    else:
+        raise Exception("Unrecognized learner type.")
+    learner.learn(beta_range)
+
+    if learner_type=='active':
+        save_pickle(['learner'], 'cache/abs_active_example_tau=%d.p'%kwargs['noise']['tau'], True)
+    else:
+        save_pickle(['learner'], 'cache/abs_passive_example_tau=%d.p'%kwargs['noise']['tau'], True)
+
+def kalman():
+    from .kalman import KalmanSim, KalmanFilter
+
+    invL_range = np.logspace(-9, 2, 30)
+    p_range = np.logspace(-7, -1, 7)[::-1]
+    gain = []
+    div = []
+
+    def loop_wrapper(args):
+        sim, invL = args
+        predx, correctx = sim.learn(invL)
+        return sim.kf.gain(), sim.div(correctx).mean()
+
+    with Pool() as pool:
+        for p in p_range:
+            sim = KalmanSim(0, p, 2, int(1e8))
+            gain_, div_ = list(zip(*pool.map(loop_wrapper, [(sim, invL) for invL in invL_range])))
+            gain.append(gain_)
+            div.append(div_)
+            print(f"Done with {np.log10(p):.2f}.")
+    div = np.array(div)
+    gain = np.array(gain)
+    save_pickle(['invL_range','p_range','div','gain'], 'cache/kalman_ex.p', True)
 
 if __name__=='__main__':
     chebyshev_convergence()
@@ -520,5 +620,6 @@ if __name__=='__main__':
     info_gain()
     tau_range()
     tau_range_eigen()
-    vision_agent_landscape()
-
+    passive_agent_landscape()
+    abs_examples()
+    abs_examples('active')

@@ -14,7 +14,7 @@ from threadpoolctl import threadpool_limits
 from .utils import *
 
 
-class Vision():
+class Passive():
     """Learn the probability distribution of a sequence of coin flips that
     evolves according to Brownian spring (or Ornstein-Ulhenbeck process).
     
@@ -32,10 +32,11 @@ class Vision():
         noise : dict
             Noise to consider.
 
-            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck or
-            'binary'.
+            Need to specify 'type' which can be 'OU' for Ornstein-Uhlenbeck,
+            'binary', 'binary_asym'. For each type, you must also give a dict of
+            parameters as specified below.
 
-            For OU:
+            For 'OU':
                 dragh : float, .01
                     Coeff on linear force pulling h back to 0, inverse time.
                 sigmah : float, 1 
@@ -43,11 +44,19 @@ class Vision():
                     environmental noise per batch step, or rate fluctuations.
                     This also determines the absolute timescale where unit steps
                     in time are when sigmah=1.
-            For binary:
+            For 'binary':
                 tau : float
                     Decorrelation time for exponential distribution.
                 scale : float
-                    Magnitude for binary values of fields.
+                    Magnitude for binary values of fields with the assumption that
+                    the values are symmetric, i.e. environmental bias only switches
+                    between the values of scale and -scale.
+            For 'binary_asym':
+                tau : float
+                    Decorrelation time for exponential distribution.
+                values : twople
+                    Magnitude for binary values of fields between which to switch.
+                    Permits arbitrary values.
         nBatch : int, 20
             Number of samples on which the cells learn. Effectively, the time
             scale for cell learning.
@@ -59,7 +68,6 @@ class Vision():
             time.
         rng : np.random.RandomState, None
         """
-        
         assert nBatch>=1 and T>0
         self.nBatch = nBatch
         self.T = T
@@ -101,6 +109,22 @@ class Vision():
             #    h[t:t+dt] = hscale
             #    t += dt
             self.hscale = hscale
+
+        elif noise['type']=='binary_asym':
+            tau = noise['tau']  # decorrelation time
+            hscale = noise['values']  # magnitude of biasing fields
+
+            h[0] = hscale[0]
+            for t in range(1, T):
+                if self.rng.rand()<(1/tau):
+                    # switch bias
+                    if h[t-1]==hscale[0]:
+                        h[t] = hscale[1]
+                    else:
+                        h[t] = hscale[0]
+                else:
+                    # maintain same bias
+                    h[t] = h[t-1]
         else:
             raise Exception("Unrecognized noise type.")
         
@@ -122,6 +146,8 @@ class Vision():
             for the feedback loop.
         n_cpus : int, None
         save : bool, True
+            Store time trajectories of simulation in instance. This can take up a
+            huge amount of memory, so good to turn to False when unneeded.
         use_other_dkl : bool, False
             Default is to measure probability distribution of h instead of hhat.
             Note that using hhat as probability distribution can lead to
@@ -133,7 +159,6 @@ class Vision():
             Averaged Kullback-Leibler divergence per given value of beta. Full
             simulation results are saved in self.dkl.
         """
-
         if beta_range is None:
             beta_range = [self.beta]
         assert np.unique(beta_range).size==len(beta_range)
@@ -146,15 +171,16 @@ class Vision():
         if save:
             def loop_wrapper(beta):
                 self.update_beta(beta)
-                #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
-                return jit_learn_vision(seed,
-                                        self.T,
-                                        self.h,
-                                        self.nBatch,
-                                        self.beta)
+                assert not hasattr(beta, '__len__')  # from new numba bug
+                return jit_learn_passive(seed,
+                                         self.T,
+                                         self.h,
+                                         self.nBatch,
+                                         self.beta)
             
             if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
+                    loop_wrapper(beta_range[0])
                     hhat_, H_, dkl_ = list(zip(*pool.map(loop_wrapper, beta_range)))
                     hhat = dict(zip(beta_range, hhat_))
                     H = dict(zip(beta_range, H_))
@@ -167,11 +193,11 @@ class Vision():
             def loop_wrapper(beta):
                 self.update_beta(beta)
                 #hhat[beta], H[beta], dkl[beta] = self._learn(**kwargs)
-                return jit_learn_vision(seed,
-                                        self.T,
-                                        self.h,
-                                        self.nBatch,
-                                        self.beta)[-1]
+                return jit_learn_passive(seed,
+                                         self.T,
+                                         self.h,
+                                         self.nBatch,
+                                         self.beta)[-1]
             
             if n_cpus is None or n_cpus > 1:
                 with mp.Pool(n_cpus) as pool:
@@ -228,19 +254,19 @@ class Vision():
                                     pminus(self.h[t]) * (np.log(pminus(self.h[t])) - np.log(pminus(hhat[t])))])
 
         return hhat, H, dkl
-#end Vision
+#end Passive
 
 @njit
-def jit_learn_vision(seed, T, h, nBatch, beta):
-    """Jit version of Vision._learn().
+def jit_learn_passive(seed, T, h, nBatch, beta):
+    """Jit version of Passive._learn().
     """
-
     if seed!=-1:
         np.random.seed(seed)
     
     hhat = np.zeros(T)
     H = np.zeros(T)
     dkl = np.zeros(T)
+    Xmu = 0.
 
     for t in range(T):
         # simulate coin flip using environmental field
@@ -272,12 +298,11 @@ def jit_learn_vision(seed, T, h, nBatch, beta):
             dkl[t] += term1
         if not np.isnan(term2):
             dkl[t] += term2
-    
     return hhat, H, dkl
 
 
 
-class Stigmergy(Vision):
+class Active(Passive):
     """Learn the probability distribution of a sequence of coin flips that
     evolves according to Brownian spring (or Ornstein-Ulhenbeck process) with
     feedback from action loop that depletes information in the environment. 
@@ -385,7 +410,7 @@ class Stigmergy(Vision):
                 #h[beta], hhat[beta], H[beta], dkl[beta] = self._learn()
                 # call fast jit version
                 if self.noise['type']=='ou':
-                    return jit_learn_stigmergy(seed, self.T, self.u, self.v,
+                    return jit_learn_active(seed, self.T, self.u, self.v,
                                                self.dragh, self.dh,
                                                self.nBatch, self.beta, self.alpha)
                 else:
@@ -399,13 +424,13 @@ class Stigmergy(Vision):
                         jitnoise[k] = v
 
                     if typ=='binary ant':
-                        return jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                        return jit_learn_active_binary_noise_ant(seed, self.T,
                                                                     jitnoise,
                                                                     self.nBatch,
                                                                     self.beta)
                
                     else:
-                        return jit_learn_stigmergy_binary_noise(seed, self.T,
+                        return jit_learn_active_binary_noise(seed, self.T,
                                                                 jitnoise,
                                                                 self.nBatch,
                                                                 self.beta)
@@ -439,7 +464,7 @@ class Stigmergy(Vision):
                 # call fast jit version
                 if self.noise['type']=='ou':
                     raise NotImplementedError
-                    return jit_learn_stigmergy(seed, self.T, self.u, self.v,
+                    return jit_learn_active(seed, self.T, self.u, self.v,
                                                self.dragh, self.dh,
                                                self.nBatch, self.beta, self.alpha)
                 else:
@@ -453,13 +478,13 @@ class Stigmergy(Vision):
                         jitnoise[k] = v
                     
                     if typ=='binary ant':
-                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise_ant(seed, self.T,
+                        h, hhat, H, dkl = jit_learn_active_binary_noise_ant(seed, self.T,
                                                                                jitnoise,
                                                                                self.nBatch,
                                                                                self.beta)
                         return dkl
                     else:
-                        h, hhat, H, dkl = jit_learn_stigmergy_binary_noise(seed, self.T,
+                        h, hhat, H, dkl = jit_learn_active_binary_noise(seed, self.T,
                                                                            jitnoise,
                                                                            self.nBatch,
                                                                            self.beta)
@@ -570,12 +595,12 @@ class Stigmergy(Vision):
                 dkl[t] = np.nansum([pplus(h[t]) * (np.log(pplus(h[t])) - np.log(pplus(hhat[t]))),
                                     pminus(h[t]) * (np.log(pminus(h[t])) - np.log(pminus(hhat[t])))])
         return h, hhat, H, dkl
-#end Stigmergy
+#end Active
 
 
 @njit
-def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
-    """Jit version of Stigmergy._learn().
+def jit_learn_active(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
+    """Jit version of Active._learn().
     """
 
     if seed!=-1:
@@ -626,7 +651,7 @@ def jit_learn_stigmergy(seed, T, u, v, dragh, dh, nBatch, beta, alpha):
     return h, hhat, H, dkl
 
 @njit
-def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
+def jit_learn_active_binary_noise(seed, T, noise, nBatch, beta):
     if seed!=-1:
         np.random.seed(seed)
     
@@ -686,7 +711,7 @@ def jit_learn_stigmergy_binary_noise(seed, T, noise, nBatch, beta):
     return h, hhat, H, dkl
 
 @njit
-def jit_learn_stigmergy_binary_noise_ant(seed, T, noise, nBatch, beta):
+def jit_learn_active_binary_noise_ant(seed, T, noise, nBatch, beta):
     if seed!=-1:
         np.random.seed(seed)
     

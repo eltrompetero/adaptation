@@ -9,17 +9,18 @@ from numba import types
 from warnings import warn
 import multiprocess as mp
 from threadpoolctl import threadpool_limits
+from scipy.sparse import csr_matrix
 
 
 
-class Vision():
+class Passive():
     """Eigenvalue formulation for binary (h0, -h0) environment state.
 
     For divergence landscape, use .dkl() to calculate divergence as a function of memory
     weighting term beta.
     """
     def __init__(self, tau, h0, beta, nBatch,
-                 L=.5, dx=None, **kwargs):
+                 L=.5, dx=None, zero_threshold=1e-20, **kwargs):
         """
         Parameters
         ----------
@@ -35,9 +36,11 @@ class Vision():
             Max positive value of lattice. Domain spans [-L, L].
         dx : float, None
             Spacing of points on lattice spreading out from x=0.
+        zero_threshold : float, 1e-20
+            Value below which entries of convolution matrix are set to 0. This is
+            then used to determine the size of the resulting sparse matrix.
         **kwargs
         """
-        
         # check input args
         assert tau>=1
         assert 0 <= h0 < L
@@ -66,7 +69,7 @@ class Vision():
         s = np.sqrt(pplus(h0) * pminus(h0) / nBatch)
         self.eps_gaussian = lambda x, mu=0., sigma=s: (np.exp(-(x-mu)**2 / 2 / sigma**2) /
                                                        np.sqrt(2 * np.pi) / sigma)
-        self.M = np.ones(x.size) * dx  # integration operator
+        self.M = np.ones(x.size) * dx  # integration operator; in this way spacing can be arbitrary
         self.M[0] /= 2
         self.M[-1] /= 2
         self.trapz_row = lambda mat, M=self.M : mat.dot(M)
@@ -74,9 +77,16 @@ class Vision():
         dhhat = (x[:,None] - x[None,:]*beta) / (1-beta)  # what would delta hhat be given the change to hhat
         eps = (np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field relative to h0
         self.staycoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
+        # apply sparseness threshold
+        self.staycoeff[self.staycoeff<zero_threshold] = 0
+        self.staycoeff = csr_matrix(self.staycoeff)
+
         eps = (-np.tanh(h0) - np.tanh(dhhat)) / 2  # error in measured field relative to -h0
         self.leavecoeff = self.eps_gaussian(eps) * .5 * (1-np.tanh(dhhat)**2)  # term that goes into integral
-        
+        # apply sparseness threshold
+        self.leavecoeff[self.leavecoeff<zero_threshold] = 0
+        self.leavecoeff = csr_matrix(self.leavecoeff)
+
         # basic precision checks (for one's sanity)
         assert np.isclose(self.eps_gaussian(x).dot(self.M), 1), (h0, beta, nBatch, L, dx)
         assert np.isclose(np.linalg.norm(x+x[::-1]), 0)
@@ -88,11 +98,11 @@ class Vision():
         
     def stay(self, phat):
         """Transformation of density given that external field stays the same."""
-        return self.trapz_row(phat[None,:] * self.staycoeff) / (1-self.beta)
+        return self.trapz_row(self.staycoeff.multiply(phat[None,:])) / (1-self.beta)
 
     def leave(self, phat):
         """Transformation of density given that external field flips in sign."""
-        return self.trapz_row(phat[None,:] * self.leavecoeff) / (1-self.beta)
+        return self.trapz_row(self.leavecoeff.multiply(phat[None,:])) / (1-self.beta)
 
     def apply_transform(self,
                         phat,
@@ -112,7 +122,6 @@ class Vision():
         -------
         ndarray
         """
-
         assert recurse>=0
         assert recurse%(recurse_skip+1)==0
 
@@ -168,6 +177,7 @@ class Vision():
             Number of first order approximations to run to get an approximate starting form.
         tol : float, 1e-5
         tmax : int, 30
+            Max number of iterations to run.
         phat0 : ndarray, None
             Starting solution. Otherwise, it is approximated using the tree to depth 1.
         iprint : bool, True
@@ -181,7 +191,6 @@ class Vision():
         int
             Error flag.
         """
-
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
         # sanity check for normalization
@@ -202,7 +211,8 @@ class Vision():
         else:
             assert phat0.size==newphat.size
             newphat = phat0
-
+        
+        # iterate to convergence or til max number of iters allowed
         while counter<=tmax and err>tol:
             phat = newphat
             newphat = self.apply_transform(phat, recursion_depth, **transform_kw)
@@ -257,7 +267,6 @@ class Vision():
         ndarray
         ndarray
         """
-        
         phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
@@ -307,7 +316,6 @@ class Vision():
             Eigenvalue solution error (change in functional form after repeated
             iteration).
         """
- 
         newphat = np.ones_like(self.x)
         newphat /= newphat.dot(self.M)
 
@@ -420,7 +428,6 @@ class Vision():
             Array of errors for each point. First col is iteration error, second col is
             recursion error.
         """
-        
         if not hasattr(recurse, '__len__'):
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
@@ -483,13 +490,12 @@ class Vision():
 
             solvedDkl[i] = ( dkl * phatpos[i] ).dot(M)
         return solvedDkl 
-Passive = Vision  # alias
-#end Vision
+#end Passive
 
 
 
-class Stigmergy(Vision):
-    """Eigenvalue formulation for binary (h0, -h0) environment state. See Vision class for
+class Active(Passive):
+    """Eigenvalue formulation for binary (h0, -h0) environment state. See Passive class for
     more details.
 
     Note that parameter v in the code is given as v^2 in the paper and that it carries the
@@ -500,7 +506,6 @@ class Stigmergy(Vision):
         """For destabilizers v<0 and for stabilizers v>0 (which is more intuitive but the
         negative of the specification in the paper).
         """
-
         self.v = v
         self.weight = weight
         
@@ -509,11 +514,11 @@ class Stigmergy(Vision):
             
         # term will be multiplied by 1-1/tau
         if self.tau==1:  # for dissipators tau<1 means the environment changes for sure
-            self.staycoeff *= stayprob
+            self.staycoeff = self.staycoeff.multiply(stayprob)
         else:
-            self.staycoeff *= stayprob / (1 - 1/self.tau)
+            self.staycoeff = self.staycoeff.multiply(stayprob / (1 - 1/self.tau))
         # term will be multiplied by 1/tau
-        self.leavecoeff *= (1 - stayprob) * self.tau
+        self.leavecoeff = self.leavecoeff.multiply((1 - stayprob) * self.tau)
 
     def apply_transform_cond_external(self, phat):
         """Imagine starting a system with equal probability on h0 and -h0. Then, one
@@ -537,7 +542,6 @@ class Stigmergy(Vision):
         ndarray
         ndarray
         """
-        
         phat_pos = np.zeros_like(self.x)
 
         # starting with + and staying
@@ -564,7 +568,6 @@ class Stigmergy(Vision):
         -------
         ndarray
         """
-        
         stay = self.binary_env_stay_p(self.x-self.h0)
         
         term1 = np.log(1/(1-stay) / self.tau) / self.tau 
@@ -607,7 +610,6 @@ class Stigmergy(Vision):
         ndarray
             Time-averaged stability cost.
         """
-        
         if not hasattr(recurse, '__len__'):
             recurse = [recurse]*beta_range.size
         n_cpus = n_cpus or (mp.cpu_count()-1)
@@ -690,7 +692,6 @@ class Stigmergy(Vision):
         float or ndarray
             Stay probability. Decay probability is 1 minus this.
         """
-        
         if self.v<0:
             v = -self.v
             weight = -self.weight
@@ -721,7 +722,6 @@ class Stigmergy(Vision):
         ndarray
             Desired moment of tilde taue.
         """
-        
         assert order>=1
         order = float(order)
 
@@ -762,10 +762,10 @@ class Stigmergy(Vision):
         #return part1 + part2
 
         return (phat[selectix].dot(termToAvg) + phat[nselectix].dot(ntermToAvg)) / phat.sum()
-#end Stigmergy
+#end Active
 
 
-    
+
 class Landscape():
     def __init__(self, env_prop, agent_prop, beta_range, scale_range, nbatch_range):
         """
@@ -793,7 +793,7 @@ class Landscape():
         """Put every combination of scale, nbatch, and beta on a separate thread. Though
         this will be expensive in terms of the time to start up each thread, it will not
         have to wait for long recursions to finish before starting on a new instance of
-        Stigmergy.
+        Active.
 
         Parameters
         ----------
@@ -819,7 +819,7 @@ class Landscape():
             # must be careful to maintain small enough spacing for accurate computation
             # note that we do not go beyond h0=1 for standard sims and following
             # parameters suffice
-            solver = Stigmergy(tau, scale, 0, nbatch,
+            solver = Active(tau, scale, 0, nbatch,
                                L=max(.5,scale*2),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
@@ -926,7 +926,7 @@ class AgentLandscape():
             # must be careful to maintain small enough spacing for accurate computation
             # note that we do not go beyond h0=1 for standard sims and following
             # parameters suffice
-            solver = Stigmergy(tau, scale, 0, nbatch,
+            solver = Active(tau, scale, 0, nbatch,
                                L=max(.5,scale*2.5),
                                weight=weight, v=v)
             return solver.dkl(np.array([beta]), n_cpus=1, iprint=False)
