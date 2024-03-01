@@ -255,8 +255,8 @@ def tau_range_eigen(run_passive=True, run_destabilizer=True, run_stabilizer=True
         cost = {}
 
         for tau in tauRange:
-            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=2.5e-4)
-            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange)
+            solvers[tau] = eigen.Active(tau, h0, 0, nBatch, L=.5, v=v, weight=weight, dx=5e-5)
+            edkl[tau], errs[tau], cost[tau] = solvers[tau].dkl(betaRange, tmax=1500)
             print("Done with tau=%E."%tau)
             
         varlist = ['edkl', 'errs', 'cost', 'betaRange', 'h0', 'nBatch', 'tauRange']
